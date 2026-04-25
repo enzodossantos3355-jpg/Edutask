@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 2 backend regression: re-validated all flows + new endpoints (status, subjects, password-back-to-admin). 27/27 tests passing on REACT_APP_BACKEND_URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/users", "issue": "Stores plain-text password in `password_plain` field on the user document so admin can later view it. This is by design per requirements but is a security smell (password leakage if DB is compromised). Consider documenting/limiting access."},
+      {"endpoint": "GET /api/auth/profiles", "issue": "Public endpoint exposes ALL profile names + ids + statuses (including admin). Acceptable for the profile-picker UX, but worth noting publicly."},
+      {"endpoint": "POST /api/auth/login", "issue": "No brute-force lockout / rate limiting. Login is unprotected against repeated wrong-password attempts (auth_testing.md mentions 5-fail lockout)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: add brute-force lockout (5 fails) per auth playbook.",
+    "Optional: hide admin from public /api/auth/profiles or only expose alunos."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~590 lines; still single-file but acceptable for current scope. If it grows further, split into routers/auth.py, routers/tasks.py etc.",
+    "`password_plain` stored in plaintext alongside bcrypt hash (per spec). Mitigation: never expose via aluno endpoints (currently OK, only admin sees it).",
+    "`/api/auth/profiles` is public and returns admin too — fine for picker, but consider filtering to role!=admin if security tightens.",
+    "No rate limit / brute-force lockout on /auth/login (auth_testing.md asks for 5-fail lockout).",
+    "JWT_SECRET correctly read from env. Cookie flag secure=False is fine for preview env; should be True in production.",
+    "Subject duplicate check uses regex `^name$` with `i` option — OK but un-escaped name could break with regex chars. Consider re.escape or simple lower() comparison."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "admin@escola.com / enzo123cg (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Tests create TEST_-prefixed students/subjects/tasks and clean them up via admin DELETE in fixtures. No persistent test data left.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py is the regression suite (27 tests, all green). It covers: profiles+status, login w/ email & user_id, login blocked for maintenance/blocked statuses, users CRUD (no email, name+password), admin sees plain password & status in GET /api/users, PATCH /api/users/{id}/status (admin only, validates active|maintenance|blocked), subjects (8-default seed + create/delete/dup-case-insensitive), tasks lifecycle (create/list/update/complete idempotent/uncomplete/delete), file upload & download via Bearer + ?auth= query. Use `pytest /app/backend/tests/backend_test.py -v`. Only frontend is left to test in next iterations.",
+  "rca_of_the_issue": "n/a — no failing tests this iteration."
+}

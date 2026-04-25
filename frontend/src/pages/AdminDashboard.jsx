@@ -1,21 +1,18 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, BookOpen, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, MoreVertical } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
+import { getPriority, formatDateBR } from "@/lib/priority";
+
+const STATUS_OPTS = [
+  { key: "active", label: "Ativo", icon: CheckCircle, bg: "bg-emerald-200" },
+  { key: "maintenance", label: "Em manutenção", icon: Wrench, bg: "bg-orange-300" },
+  { key: "blocked", label: "Bloqueado", icon: Lock, bg: "bg-neutral-300" },
+];
 
 const subjectColors = ["bg-sky-200", "bg-amber-200", "bg-red-200", "bg-emerald-200", "bg-violet-200", "bg-rose-200"];
 const colorFor = (s) => subjectColors[(s || "").length % subjectColors.length];
-
-function formatDate(iso) {
-  if (!iso) return "";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
-  } catch {
-    return iso;
-  }
-}
 
 export default function AdminDashboard() {
   const [tab, setTab] = useState("tasks");
@@ -38,8 +35,17 @@ export default function AdminDashboard() {
           >
             <Users className="w-4 h-4 inline mr-2" /> Alunos
           </button>
+          <button
+            onClick={() => setTab("subjects")}
+            className={`nb-btn px-5 py-2.5 ${tab === "subjects" ? "bg-red-300" : "bg-white"}`}
+            data-testid="tab-subjects"
+          >
+            <BookMarked className="w-4 h-4 inline mr-2" /> Matérias
+          </button>
         </div>
-        {tab === "tasks" ? <TasksPanel /> : <StudentsPanel />}
+        {tab === "tasks" && <TasksPanel />}
+        {tab === "students" && <StudentsPanel />}
+        {tab === "subjects" && <SubjectsPanel />}
       </div>
     </div>
   );
@@ -50,6 +56,7 @@ function TasksPanel() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,11 +72,12 @@ function TasksPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const onDelete = async (id) => {
-    if (!window.confirm("Excluir esta tarefa?")) return;
+  const onDelete = async () => {
+    if (!confirmDelete) return;
     try {
-      await api.delete(`/tasks/${id}`);
+      await api.delete(`/tasks/${confirmDelete.id}`);
       toast.success("Tarefa excluída");
+      setConfirmDelete(null);
       load();
     } catch (e) {
       toast.error(formatApiError(e?.response?.data?.detail));
@@ -99,24 +107,40 @@ function TasksPanel() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {tasks.map((t, i) => (
-            <AdminTaskCard key={t.id} task={t} onDelete={onDelete} index={i} />
+            <AdminTaskCard key={t.id} task={t} onDelete={() => setConfirmDelete({ id: t.id, label: t.title })} index={i} />
           ))}
         </div>
       )}
 
       {creating && <CreateTaskDialog onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Excluir tarefa?"
+          message={`Tem certeza que deseja excluir "${confirmDelete.label}"? Esta ação não pode ser desfeita.`}
+          confirmLabel="Excluir"
+          confirmClass="bg-red-300"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={onDelete}
+        />
+      )}
     </div>
   );
 }
 
 function AdminTaskCard({ task, onDelete, index }) {
   const pct = task.total_students > 0 ? Math.round((task.completed_count / task.total_students) * 100) : 0;
+  const priority = getPriority(task.due_date, false);
   return (
     <div className="nb-card nb-card-hover p-6 nb-fade-in" style={{ animationDelay: `${index * 60}ms` }} data-testid={`admin-task-card-${task.id}`}>
       <div className="flex items-start justify-between gap-3 mb-3">
-        <span className={`nb-badge ${colorFor(task.subject)}`}>{task.subject}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`nb-badge ${colorFor(task.subject)}`}>{task.subject}</span>
+          <span className={`nb-badge ${priority.bg}`} data-testid={`task-priority-${task.id}`}>
+            {priority.icon} {priority.label}
+          </span>
+        </div>
         <button
-          onClick={() => onDelete(task.id)}
+          onClick={onDelete}
           className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
           data-testid={`delete-task-${task.id}`}
           aria-label="Excluir tarefa"
@@ -129,7 +153,7 @@ function AdminTaskCard({ task, onDelete, index }) {
 
       <div className="flex items-center gap-2 text-sm mb-4">
         <CalendarIcon className="w-4 h-4" />
-        <span className="font-medium">Entrega: {formatDate(task.due_date)}</span>
+        <span className="font-medium">Entrega: {formatDateBR(task.due_date)}</span>
       </div>
 
       {task.attachments?.length > 0 && (
@@ -186,12 +210,20 @@ function FileLink({ file }) {
 
 function CreateTaskDialog({ onClose, onCreated }) {
   const [subject, setSubject] = useState("");
+  const [subjects, setSubjects] = useState([]);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
-  const [files, setFiles] = useState([]); // { id, filename }
+  const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    api.get("/subjects").then(({ data }) => {
+      setSubjects(data);
+      if (data.length > 0) setSubject(data[0].name);
+    }).catch(() => {});
+  }, []);
 
   const handleUpload = async (e) => {
     const list = Array.from(e.target.files || []);
@@ -245,7 +277,24 @@ function CreateTaskDialog({ onClose, onCreated }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-bold mb-1.5">Matéria</label>
-              <input required value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Matemática" className="nb-input" data-testid="task-subject-input" />
+              {subjects.length > 0 ? (
+                <select
+                  required
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  className="nb-input cursor-pointer"
+                  data-testid="task-subject-select"
+                >
+                  {subjects.map((s) => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="nb-card bg-amber-50 p-3 text-sm">
+                  <p className="font-bold mb-1">Nenhuma matéria cadastrada</p>
+                  <p className="text-xs text-neutral-700">Crie matérias na aba "Matérias" antes de criar tarefas.</p>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-bold mb-1.5">Data de entrega</label>
@@ -290,7 +339,7 @@ function CreateTaskDialog({ onClose, onCreated }) {
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
-            <button type="submit" disabled={submitting} className="nb-btn bg-sky-400 px-5 py-2.5" data-testid="submit-task-button">
+            <button type="submit" disabled={submitting || subjects.length === 0} className="nb-btn bg-sky-400 px-5 py-2.5" data-testid="submit-task-button">
               {submitting ? "Salvando..." : "Criar tarefa"}
             </button>
           </div>
@@ -305,6 +354,8 @@ function StudentsPanel() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [revealedIds, setRevealedIds] = useState(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -320,15 +371,24 @@ function StudentsPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const onDelete = async (id) => {
-    if (!window.confirm("Remover este aluno?")) return;
+  const onDelete = async () => {
+    if (!confirmDelete) return;
     try {
-      await api.delete(`/users/${id}`);
+      await api.delete(`/users/${confirmDelete.id}`);
       toast.success("Aluno removido");
+      setConfirmDelete(null);
       load();
     } catch (e) {
-      toast.error(formatApiError(e?.response?.data?.detail));
+      toast.error(formatApiError(e?.response?.data?.detail) || "Erro ao remover");
     }
+  };
+
+  const toggleReveal = (id) => {
+    setRevealedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
   return (
@@ -336,7 +396,7 @@ function StudentsPanel() {
       <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
         <div>
           <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Alunos</h1>
-          <p className="text-neutral-600 mt-1">Gerencie as contas dos seus alunos.</p>
+          <p className="text-neutral-600 mt-1">Gerencie as contas dos seus alunos e veja as senhas.</p>
         </div>
         <button
           onClick={() => setCreating(true)}
@@ -353,32 +413,94 @@ function StudentsPanel() {
         <EmptyState icon={Users} title="Nenhum aluno cadastrado" subtitle="Clique em 'Novo aluno' para criar a primeira conta." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {students.map((s, i) => (
-            <div key={s.id} className="nb-card nb-card-hover p-5 nb-fade-in" style={{ animationDelay: `${i * 50}ms` }} data-testid={`student-card-${s.id}`}>
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="w-12 h-12 nb-card flex items-center justify-center bg-sky-200 font-heading font-black text-lg">
-                  {s.name?.[0]?.toUpperCase() || "A"}
+          {students.map((s, i) => {
+            const revealed = revealedIds.has(s.id);
+            const status = s.status || "active";
+            const statusOpt = STATUS_OPTS.find((o) => o.key === status) || STATUS_OPTS[0];
+            const StatusIcon = statusOpt.icon;
+            return (
+              <div key={s.id} className="nb-card nb-card-hover p-5 nb-fade-in" style={{ animationDelay: `${i * 50}ms` }} data-testid={`student-card-${s.id}`}>
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="w-12 h-12 nb-card flex items-center justify-center bg-sky-200 font-heading font-black text-lg">
+                    {s.name?.[0]?.toUpperCase() || "A"}
+                  </div>
+                  <button
+                    onClick={() => setConfirmDelete({ id: s.id, label: s.name })}
+                    className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
+                    data-testid={`delete-student-${s.id}`}
+                    aria-label="Remover aluno"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <button onClick={() => onDelete(s.id)} className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2" data-testid={`delete-student-${s.id}`} aria-label="Remover aluno">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <h3 className="font-heading font-bold text-lg leading-tight">{s.name}</h3>
+
+                <div className="mt-3">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-neutral-600 mb-1">Status</label>
+                  <select
+                    value={status}
+                    onChange={async (e) => {
+                      const newStatus = e.target.value;
+                      try {
+                        await api.patch(`/users/${s.id}/status`, { status: newStatus });
+                        toast.success(`Status alterado para ${STATUS_OPTS.find(o => o.key === newStatus).label}`);
+                        load();
+                      } catch (err) {
+                        toast.error(formatApiError(err?.response?.data?.detail) || "Erro");
+                      }
+                    }}
+                    className={`nb-input cursor-pointer text-sm py-2 ${statusOpt.bg}`}
+                    data-testid={`student-status-select-${s.id}`}
+                  >
+                    {STATUS_OPTS.map((o) => (
+                      <option key={o.key} value={o.key}>{o.label}</option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-1.5 mt-1.5 text-xs font-bold">
+                    <StatusIcon className="w-3.5 h-3.5" strokeWidth={2.5} />
+                    <span>{statusOpt.label}</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 nb-card bg-amber-50 p-3">
+                  <div className="text-xs font-bold uppercase tracking-wider text-neutral-600 mb-1">Senha</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <code className="text-sm font-mono font-bold truncate" data-testid={`student-password-${s.id}`}>
+                      {revealed ? (s.password || "—") : "••••••••"}
+                    </code>
+                    <button
+                      onClick={() => toggleReveal(s.id)}
+                      className="nb-btn bg-white px-2 py-1 flex-shrink-0"
+                      aria-label={revealed ? "Ocultar senha" : "Mostrar senha"}
+                      data-testid={`toggle-password-${s.id}`}
+                    >
+                      {revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
               </div>
-              <h3 className="font-heading font-bold text-lg leading-tight">{s.name}</h3>
-              <p className="text-sm text-neutral-600 truncate">{s.email}</p>
-              <span className="nb-badge bg-sky-200 mt-3 inline-block">Aluno</span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {creating && <CreateStudentDialog onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Remover aluno?"
+          message={`Tem certeza que deseja remover "${confirmDelete.label}"? Todos os progressos deste aluno serão apagados.`}
+          confirmLabel="Remover"
+          confirmClass="bg-red-300"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={onDelete}
+        />
+      )}
     </div>
   );
 }
 
 function CreateStudentDialog({ onClose, onCreated }) {
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -386,7 +508,7 @@ function CreateStudentDialog({ onClose, onCreated }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await api.post("/users", { name, email, password });
+      await api.post("/users", { name, password });
       toast.success(`Aluno ${name} criado`);
       onCreated();
     } catch (err) {
@@ -405,17 +527,13 @@ function CreateStudentDialog({ onClose, onCreated }) {
         </div>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="block text-sm font-bold mb-1.5">Nome completo</label>
-            <input required value={name} onChange={(e) => setName(e.target.value)} className="nb-input" data-testid="student-name-input" />
+            <label className="block text-sm font-bold mb-1.5">Nome do aluno</label>
+            <input required value={name} onChange={(e) => setName(e.target.value)} className="nb-input" placeholder="Ex.: Ana Beatriz" data-testid="student-name-input" />
           </div>
           <div>
-            <label className="block text-sm font-bold mb-1.5">Email</label>
-            <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="nb-input" data-testid="student-email-input" />
-          </div>
-          <div>
-            <label className="block text-sm font-bold mb-1.5">Senha provisória</label>
-            <input required type="text" minLength={4} value={password} onChange={(e) => setPassword(e.target.value)} className="nb-input" data-testid="student-password-input" />
-            <p className="text-xs text-neutral-500 mt-1">Compartilhe esta senha com o aluno.</p>
+            <label className="block text-sm font-bold mb-1.5">Senha</label>
+            <input required type="text" minLength={4} value={password} onChange={(e) => setPassword(e.target.value)} className="nb-input" placeholder="Mínimo 4 caracteres" data-testid="student-password-input" />
+            <p className="text-xs text-neutral-500 mt-1">Você poderá ver esta senha depois nesta página.</p>
           </div>
           <div className="flex justify-end gap-3 pt-1">
             <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
@@ -425,6 +543,132 @@ function CreateStudentDialog({ onClose, onCreated }) {
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+function ConfirmDialog({ title, message, confirmLabel, confirmClass = "bg-red-300", onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" data-testid="confirm-dialog">
+      <div className="nb-card bg-white w-full max-w-sm p-6">
+        <h3 className="font-heading font-black text-xl mb-2">{title}</h3>
+        <p className="text-sm text-neutral-700 mb-5">{message}</p>
+        <div className="flex justify-end gap-3">
+          <button onClick={onCancel} className="nb-btn bg-white px-4 py-2" data-testid="confirm-cancel">Cancelar</button>
+          <button onClick={onConfirm} className={`nb-btn ${confirmClass} px-4 py-2`} data-testid="confirm-ok">{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Subjects panel ---
+function SubjectsPanel() {
+  const [subjects, setSubjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/subjects");
+      setSubjects(data);
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const add = async (e) => {
+    e.preventDefault();
+    if (!newName.trim()) return;
+    setAdding(true);
+    try {
+      await api.post("/subjects", { name: newName.trim() });
+      toast.success("Matéria adicionada");
+      setNewName("");
+      load();
+    } catch (err) {
+      toast.error(formatApiError(err?.response?.data?.detail));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const onDelete = async () => {
+    if (!confirmDelete) return;
+    try {
+      await api.delete(`/subjects/${confirmDelete.id}`);
+      toast.success("Matéria removida");
+      setConfirmDelete(null);
+      load();
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Matérias</h1>
+        <p className="text-neutral-600 mt-1">As matérias aparecem como opções ao criar uma tarefa.</p>
+      </div>
+
+      <form onSubmit={add} className="flex gap-3 mb-8 max-w-xl" data-testid="subject-form">
+        <input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Ex.: Filosofia"
+          className="nb-input"
+          maxLength={50}
+          data-testid="subject-name-input"
+        />
+        <button type="submit" disabled={adding || !newName.trim()} className="nb-btn bg-red-300 px-5 py-3 flex items-center gap-2" data-testid="add-subject-button">
+          <Plus className="w-4 h-4" strokeWidth={3} /> Adicionar
+        </button>
+      </form>
+
+      {loading ? (
+        <p className="text-neutral-500">Carregando...</p>
+      ) : subjects.length === 0 ? (
+        <EmptyState icon={BookMarked} title="Nenhuma matéria cadastrada" subtitle="Adicione matérias para usá-las em tarefas." />
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          {subjects.map((s, i) => (
+            <div
+              key={s.id}
+              className={`nb-card p-4 flex items-center justify-between gap-2 nb-fade-in ${colorFor(s.name)}`}
+              style={{ animationDelay: `${i * 40}ms` }}
+              data-testid={`subject-item-${s.id}`}
+            >
+              <span className="font-heading font-bold truncate">{s.name}</span>
+              <button
+                onClick={() => setConfirmDelete({ id: s.id, label: s.name })}
+                className="nb-btn bg-white px-2 py-1.5 flex-shrink-0"
+                data-testid={`delete-subject-${s.id}`}
+                aria-label="Remover matéria"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Remover matéria?"
+          message={`Tem certeza que deseja remover "${confirmDelete.label}"? Tarefas existentes que usam esta matéria continuam intactas.`}
+          confirmLabel="Remover"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={onDelete}
+        />
+      )}
     </div>
   );
 }

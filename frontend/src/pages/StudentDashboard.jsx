@@ -3,23 +3,10 @@ import { toast } from "sonner";
 import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
+import { getPriority, formatDateBR, daysUntil } from "@/lib/priority";
 
 const subjectColors = ["bg-sky-200", "bg-amber-200", "bg-red-200", "bg-emerald-200", "bg-violet-200", "bg-rose-200"];
 const colorFor = (s) => subjectColors[(s || "").length % subjectColors.length];
-
-function formatDate(iso) {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
-  } catch { return iso; }
-}
-
-function daysUntil(iso) {
-  if (!iso) return null;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const due = new Date(iso); due.setHours(0, 0, 0, 0);
-  return Math.round((due - today) / (1000 * 60 * 60 * 24));
-}
 
 export default function StudentDashboard() {
   const [tasks, setTasks] = useState([]);
@@ -158,7 +145,8 @@ function StatCard({ label, value, bg, testId }) {
 
 function StudentTaskCard({ task, onToggle, index }) {
   const days = daysUntil(task.due_date);
-  let dueLabel = formatDate(task.due_date);
+  const priority = getPriority(task.due_date, task.completed);
+  let dueLabel = formatDateBR(task.due_date);
   let dueBg = "bg-white";
   if (!task.completed && days != null) {
     if (days < 0) { dueLabel = `Atrasada (${Math.abs(days)}d)`; dueBg = "bg-red-200"; }
@@ -172,8 +160,13 @@ function StudentTaskCard({ task, onToggle, index }) {
       style={{ animationDelay: `${index * 60}ms` }}
       data-testid={`student-task-card-${task.id}`}
     >
-      <div className="flex items-start justify-between gap-3 mb-3">
+      <div className="flex items-start justify-between gap-2 mb-3 flex-wrap">
         <span className={`nb-badge ${colorFor(task.subject)}`}>{task.subject}</span>
+        <span className={`nb-badge ${priority.bg}`} data-testid={`student-task-priority-${task.id}`}>
+          {priority.icon} {priority.label}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 text-xs mb-3">
         <span className={`nb-badge ${dueBg}`}>
           <CalendarIcon className="w-3 h-3 inline mr-1 -mt-0.5" /> {dueLabel}
         </span>

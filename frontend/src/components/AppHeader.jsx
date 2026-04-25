@@ -1,5 +1,6 @@
-import { LogOut, GraduationCap } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
+import Logo from "@/components/Logo";
 
 export default function AppHeader({ title }) {
   const { user, logout } = useAuth();
@@ -10,18 +11,18 @@ export default function AppHeader({ title }) {
     <header className="border-b-2 border-black bg-white" data-testid="app-header">
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 nb-card flex items-center justify-center bg-amber-300 shadow-[2px_2px_0_0_rgba(0,0,0,1)]">
-            <GraduationCap className="w-5 h-5" strokeWidth={2.5} />
-          </div>
+          <Logo size={40} />
           <div>
-            <div className="font-heading font-black text-lg leading-tight">Caderno</div>
+            <div className="font-heading font-black text-lg leading-tight"><span className="text-black">Edu</span><span className="text-sky-500">task</span></div>
             <div className="text-xs text-neutral-600 font-medium leading-tight">{title}</div>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="hidden sm:flex flex-col items-end leading-tight">
             <span className="font-bold text-sm" data-testid="user-name">{user?.name}</span>
-            <span className="text-xs text-neutral-600">{user?.email}</span>
+            {user?.role === "admin" && (
+              <span className="text-xs text-neutral-600">{user?.email}</span>
+            )}
           </div>
           <span className={`nb-badge ${badgeClass}`} data-testid="user-role-badge">{roleLabel}</span>
           <button

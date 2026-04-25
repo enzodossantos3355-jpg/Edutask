@@ -116,20 +116,34 @@ class ProfileOut(BaseModel):
     id: str
     name: str
     role: str
+    status: str = "active"
 
 
 class UserCreate(BaseModel):
-    email: EmailStr
     name: str
     password: str
 
 
+class StatusUpdate(BaseModel):
+    status: str  # "active" | "maintenance" | "blocked"
+
+
 class UserOut(BaseModel):
     id: str
-    email: str
     name: str
     role: str
+    status: str = "active"
     created_at: str
+    password: Optional[str] = None  # plain-text password, only returned to admin for aluno accounts
+
+
+class SubjectCreate(BaseModel):
+    name: str
+
+
+class SubjectOut(BaseModel):
+    id: str
+    name: str
 
 
 class TaskCreate(BaseModel):
@@ -188,9 +202,10 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 # ---------------------------------------------------------------------------
 @api_router.get("/auth/profiles", response_model=List[ProfileOut])
 async def list_profiles():
-    """Public endpoint: lists all profiles (id + name + role) so users can pick one to log in."""
-    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1}).to_list(1000)
-    # Admin first, then alphabetical alunos
+    """Public endpoint: lists all profiles (id + name + role + status)."""
+    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1}).to_list(1000)
+    for u in users:
+        u.setdefault("status", "active")
     users.sort(key=lambda u: (0 if u["role"] == "admin" else 1, u["name"].lower()))
     return [ProfileOut(**u) for u in users]
 
@@ -206,6 +221,11 @@ async def login(payload: LoginRequest, response: Response):
         user = await db.users.find_one({"email": email})
     if not user or not verify_password(payload.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Senha inválida")
+    status = user.get("status", "active")
+    if status == "maintenance":
+        raise HTTPException(status_code=403, detail="Perfil em manutenção. Fale com o administrador.")
+    if status == "blocked":
+        raise HTTPException(status_code=403, detail="Perfil bloqueado. Fale com o administrador.")
     token = create_access_token(user["id"], user["email"])
     response.set_cookie(
         key="access_token", value=token, httponly=True,
@@ -236,26 +256,85 @@ async def me(user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 @api_router.post("/users", response_model=UserOut)
 async def create_user(payload: UserCreate, _: dict = Depends(require_admin)):
-    email = payload.email.lower().strip()
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email já cadastrado")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nome obrigatório")
+    if await db.users.find_one({"name": name, "role": "aluno"}):
+        raise HTTPException(status_code=400, detail="Já existe um aluno com este nome")
     user_id = str(uuid.uuid4())
+    internal_email = f"aluno-{user_id}@local"
     doc = {
         "id": user_id,
-        "email": email,
-        "name": payload.name.strip(),
+        "email": internal_email,
+        "name": name,
         "password_hash": hash_password(payload.password),
+        "password_plain": payload.password,
         "role": "aluno",
+        "status": "active",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
-    return UserOut(id=user_id, email=email, name=doc["name"], role="aluno", created_at=doc["created_at"])
+    return UserOut(id=user_id, name=name, role="aluno", status="active",
+                   created_at=doc["created_at"], password=payload.password)
 
 
 @api_router.get("/users", response_model=List[UserOut])
 async def list_users(_: dict = Depends(require_admin)):
-    users = await db.users.find({"role": "aluno"}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(1000)
-    return [UserOut(**u) for u in users]
+    users = await db.users.find(
+        {"role": "aluno"},
+        {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "created_at": 1, "password_plain": 1},
+    ).sort("created_at", -1).to_list(1000)
+    return [
+        UserOut(
+            id=u["id"], name=u["name"], role=u["role"],
+            status=u.get("status", "active"),
+            created_at=u["created_at"],
+            password=u.get("password_plain"),
+        )
+        for u in users
+    ]
+
+
+@api_router.patch("/users/{user_id}/status")
+async def update_user_status(user_id: str, payload: StatusUpdate, _: dict = Depends(require_admin)):
+    if payload.status not in ("active", "maintenance", "blocked"):
+        raise HTTPException(status_code=400, detail="Status inválido")
+    result = await db.users.update_one(
+        {"id": user_id, "role": "aluno"}, {"$set": {"status": payload.status}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    return {"ok": True, "status": payload.status}
+
+
+# ---------------------------------------------------------------------------
+# Subjects (matérias) - admin manages, all read
+# ---------------------------------------------------------------------------
+@api_router.get("/subjects", response_model=List[SubjectOut])
+async def list_subjects(_: dict = Depends(get_current_user)):
+    items = await db.subjects.find({}, {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(500)
+    return [SubjectOut(**i) for i in items]
+
+
+@api_router.post("/subjects", response_model=SubjectOut)
+async def create_subject(payload: SubjectCreate, _: dict = Depends(require_admin)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nome obrigatório")
+    existing = await db.subjects.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}})
+    if existing:
+        raise HTTPException(status_code=400, detail="Matéria já existe")
+    sid = str(uuid.uuid4())
+    await db.subjects.insert_one({"id": sid, "name": name})
+    return SubjectOut(id=sid, name=name)
+
+
+@api_router.delete("/subjects/{subject_id}")
+async def delete_subject(subject_id: str, _: dict = Depends(require_admin)):
+    result = await db.subjects.delete_one({"id": subject_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Matéria não encontrada")
+    return {"ok": True}
 
 
 @api_router.delete("/users/{user_id}")
@@ -451,6 +530,16 @@ async def on_startup():
     await db.tasks.create_index("id", unique=True)
     await db.completions.create_index([("task_id", 1), ("user_id", 1)], unique=True)
     await db.files.create_index("id", unique=True)
+    await db.subjects.create_index("id", unique=True)
+
+    # Seed default subjects (only on empty collection)
+    if await db.subjects.count_documents({}) == 0:
+        defaults = [
+            "Matemática", "Português", "Ciências", "História",
+            "Geografia", "Inglês", "Artes", "Educação Física",
+        ]
+        await db.subjects.insert_many([{"id": str(uuid.uuid4()), "name": n} for n in defaults])
+        logger.info("Default subjects seeded")
 
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@escola.com").lower()
@@ -463,6 +552,7 @@ async def on_startup():
             "name": "Administrador",
             "password_hash": hash_password(admin_password),
             "role": "admin",
+            "status": "active",
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
         logger.info("Admin seeded")
@@ -484,6 +574,11 @@ async def on_shutdown():
 # ---------------------------------------------------------------------------
 # CORS + include router
 # ---------------------------------------------------------------------------
+@api_router.get("/")
+async def root():
+    return {"ok": True, "app": "school-tasks"}
+
+
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
@@ -492,8 +587,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@api_router.get("/")
-async def root():
-    return {"ok": True, "app": "school-tasks"}

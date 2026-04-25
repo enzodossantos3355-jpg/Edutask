@@ -1,9 +1,16 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { GraduationCap, BookOpen, Pencil, ArrowLeft, ShieldCheck, User } from "lucide-react";
+import { BookOpen, Pencil, ArrowLeft, ShieldCheck, User, Wrench, Lock } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import api, { formatApiError } from "@/lib/api";
+import Logo from "@/components/Logo";
+
+const STATUS_META = {
+  active: { label: null, icon: null, bg: null, dim: false },
+  maintenance: { label: "Manutenção", icon: Wrench, bg: "bg-orange-300", dim: true },
+  blocked: { label: "Bloqueado", icon: Lock, bg: "bg-neutral-400", dim: true },
+};
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -43,11 +50,26 @@ export default function LoginPage() {
       toast.success(`Bem-vindo, ${u.name}!`);
       navigate(u.role === "admin" ? "/admin" : "/aluno", { replace: true });
     } catch (err) {
-      toast.error(formatApiError(err?.response?.data?.detail) || "Senha incorreta");
+      const msg = formatApiError(err?.response?.data?.detail) || "Senha incorreta";
+      toast.error(msg);
       setPassword("");
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleProfileClick = (p) => {
+    const meta = STATUS_META[p.status] || STATUS_META.active;
+    if (p.status === "maintenance") {
+      toast.warning("Este perfil está em manutenção. Fale com o administrador.");
+      return;
+    }
+    if (p.status === "blocked") {
+      toast.error("Este perfil está bloqueado. Fale com o administrador.");
+      return;
+    }
+    setSelected(p);
+    setPassword("");
   };
 
   return (
@@ -62,10 +84,10 @@ export default function LoginPage() {
         <div className="absolute inset-0 bg-gradient-to-tr from-amber-200/40 via-transparent to-sky-200/30" />
         <div className="relative z-10 p-10 flex flex-col justify-between w-full">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 nb-card flex items-center justify-center bg-sky-300">
-              <GraduationCap className="w-6 h-6" strokeWidth={2.5} />
-            </div>
-            <span className="font-heading font-black text-2xl">Caderno</span>
+            <Logo size={48} />
+            <span className="font-heading font-black text-3xl tracking-tight text-white drop-shadow-[2px_2px_0_rgba(0,0,0,0.9)]">
+              Edu<span className="text-sky-300">task</span>
+            </span>
           </div>
           <div className="space-y-4">
             <div className="inline-block nb-card bg-amber-300 px-4 py-2">
@@ -75,7 +97,7 @@ export default function LoginPage() {
               A lição de hoje, organizada para amanhã.
             </h1>
             <p className="text-base text-black/80 max-w-md font-medium">
-              Professores criam, alunos completam. Anexos, prazos e progresso — tudo em um caderno só.
+              Professores criam, alunos completam. Anexos, prazos e progresso — tudo em um só lugar.
             </p>
           </div>
           <div className="flex gap-3">
@@ -92,11 +114,11 @@ export default function LoginPage() {
       {/* Right side */}
       <div className="flex-1 flex items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-2xl">
-          <div className="flex items-center gap-2 mb-6 lg:hidden">
-            <div className="w-10 h-10 nb-card flex items-center justify-center bg-sky-300">
-              <GraduationCap className="w-5 h-5" strokeWidth={2.5} />
-            </div>
-            <span className="font-heading font-black text-xl">Caderno</span>
+          <div className="flex items-center gap-3 mb-6 lg:hidden">
+            <Logo size={40} />
+            <span className="font-heading font-black text-2xl tracking-tight">
+              <span className="text-black">Edu</span><span className="text-sky-500">task</span>
+            </span>
           </div>
 
           {!selected ? (
@@ -113,24 +135,40 @@ export default function LoginPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4" data-testid="profiles-grid">
-                  {profiles.map((p, i) => (
-                    <button
-                      key={p.id}
-                      onClick={() => { setSelected(p); setPassword(""); }}
-                      className="nb-card nb-card-hover p-4 bg-white text-center group nb-fade-in"
-                      style={{ animationDelay: `${i * 50}ms` }}
-                      data-testid={`profile-${p.id}`}
-                    >
-                      <div className={`w-20 h-20 mx-auto mb-3 nb-card flex items-center justify-center font-heading font-black text-3xl ${p.role === "admin" ? "bg-red-300" : "bg-sky-300"}`}>
-                        {p.name?.[0]?.toUpperCase() || "?"}
-                      </div>
-                      <div className="font-heading font-bold text-base leading-tight truncate">{p.name}</div>
-                      <span className={`nb-badge mt-2 inline-flex items-center gap-1 ${p.role === "admin" ? "bg-red-200" : "bg-sky-200"}`}>
-                        {p.role === "admin" ? <ShieldCheck className="w-3 h-3" /> : <User className="w-3 h-3" />}
-                        {p.role === "admin" ? "Admin" : "Aluno"}
-                      </span>
-                    </button>
-                  ))}
+                  {profiles.map((p, i) => {
+                    const meta = STATUS_META[p.status] || STATUS_META.active;
+                    const StatusIcon = meta.icon;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => handleProfileClick(p)}
+                        className={`nb-card nb-card-hover p-4 bg-white text-center group nb-fade-in relative ${meta.dim ? "opacity-60" : ""}`}
+                        style={{ animationDelay: `${i * 50}ms` }}
+                        data-testid={`profile-${p.id}`}
+                      >
+                        <div className={`w-20 h-20 mx-auto mb-3 nb-card flex items-center justify-center font-heading font-black text-3xl ${p.role === "admin" ? "bg-red-300" : "bg-sky-300"} ${meta.dim ? "grayscale" : ""}`}>
+                          {p.name?.[0]?.toUpperCase() || "?"}
+                        </div>
+                        <div className="font-heading font-bold text-base leading-tight truncate">{p.name}</div>
+                        {meta.label ? (
+                          <span className={`nb-badge mt-2 inline-flex items-center gap-1 ${meta.bg}`} data-testid={`profile-status-${p.id}`}>
+                            {StatusIcon && <StatusIcon className="w-3 h-3" strokeWidth={2.5} />}
+                            {meta.label}
+                          </span>
+                        ) : (
+                          <span className={`nb-badge mt-2 inline-flex items-center gap-1 ${p.role === "admin" ? "bg-red-200" : "bg-sky-200"}`}>
+                            {p.role === "admin" ? <ShieldCheck className="w-3 h-3" /> : <User className="w-3 h-3" />}
+                            {p.role === "admin" ? "Admin" : "Aluno"}
+                          </span>
+                        )}
+                        {StatusIcon && (
+                          <div className={`absolute -top-2 -right-2 w-9 h-9 nb-card flex items-center justify-center ${meta.bg}`}>
+                            <StatusIcon className="w-4 h-4" strokeWidth={3} />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
