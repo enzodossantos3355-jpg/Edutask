@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
@@ -65,6 +65,7 @@ function TasksPanel() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const load = useCallback(async () => {
@@ -93,6 +94,36 @@ function TasksPanel() {
     }
   };
 
+  const copyTaskInfo = async (task) => {
+    const recipients = task.all_students
+      ? "Todos os alunos"
+      : (task.progress || []).map((p) => p.name).join(", ") || "—";
+    const attachments = (task.attachments || []).map((a) => a.original_filename).join(", ") || "—";
+    const text = [
+      `📚 ${task.subject} — ${task.title}`,
+      `📅 Entrega: ${formatDateBR(task.due_date)}`,
+      `👥 Destinatários: ${recipients}`,
+      `📎 Anexos: ${attachments}`,
+      "",
+      task.description,
+    ].join("\n");
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      toast.success("Informações copiadas!");
+    } catch {
+      toast.error("Não foi possível copiar");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -116,12 +147,20 @@ function TasksPanel() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {tasks.map((t, i) => (
-            <AdminTaskCard key={t.id} task={t} onDelete={() => setConfirmDelete({ id: t.id, label: t.title })} index={i} />
+            <AdminTaskCard
+              key={t.id}
+              task={t}
+              onDelete={() => setConfirmDelete({ id: t.id, label: t.title })}
+              onEdit={() => setEditing(t)}
+              onCopy={() => copyTaskInfo(t)}
+              index={i}
+            />
           ))}
         </div>
       )}
 
-      {creating && <CreateTaskDialog onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />}
+      {creating && <TaskDialog onClose={() => setCreating(false)} onSaved={() => { setCreating(false); load(); }} />}
+      {editing && <TaskDialog task={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {confirmDelete && (
         <ConfirmDialog
           title="Excluir tarefa?"
@@ -136,7 +175,7 @@ function TasksPanel() {
   );
 }
 
-function AdminTaskCard({ task, onDelete, index }) {
+function AdminTaskCard({ task, onDelete, onEdit, onCopy, index }) {
   const pct = task.total_students > 0 ? Math.round((task.completed_count / task.total_students) * 100) : 0;
   const priority = getPriority(task.due_date, false);
   return (
@@ -152,14 +191,35 @@ function AdminTaskCard({ task, onDelete, index }) {
             {task.all_students ? "Todos" : `${task.total_students} aluno${task.total_students === 1 ? "" : "s"}`}
           </span>
         </div>
-        <button
-          onClick={onDelete}
-          className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
-          data-testid={`delete-task-${task.id}`}
-          aria-label="Excluir tarefa"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          <button
+            onClick={onCopy}
+            className="nb-btn bg-white hover:bg-sky-100 px-2 py-2"
+            data-testid={`copy-task-${task.id}`}
+            aria-label="Copiar informações"
+            title="Copiar informações"
+          >
+            <Copy className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onEdit}
+            className="nb-btn bg-amber-200 hover:bg-amber-300 px-2 py-2"
+            data-testid={`edit-task-${task.id}`}
+            aria-label="Editar tarefa"
+            title="Editar"
+          >
+            <Pencil className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onDelete}
+            className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
+            data-testid={`delete-task-${task.id}`}
+            aria-label="Excluir tarefa"
+            title="Excluir"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
       <h3 className="font-heading font-bold text-xl mb-1 leading-tight">{task.title}</h3>
       <p className="text-sm text-neutral-700 mb-4 line-clamp-3 whitespace-pre-wrap">{task.description}</p>
@@ -221,24 +281,28 @@ function FileLink({ file }) {
   );
 }
 
-function CreateTaskDialog({ onClose, onCreated }) {
-  const [subject, setSubject] = useState("");
+function TaskDialog({ task, onClose, onSaved }) {
+  const isEdit = Boolean(task);
+  const [subject, setSubject] = useState(task?.subject || "");
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
-  const [assignedTo, setAssignedTo] = useState([]); // [] = all
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [files, setFiles] = useState([]);
+  const [assignedTo, setAssignedTo] = useState(task?.assigned_to || []);
+  const [title, setTitle] = useState(task?.title || "");
+  const [description, setDescription] = useState(task?.description || "");
+  const [dueDate, setDueDate] = useState(task?.due_date || "");
+  const [files, setFiles] = useState(
+    (task?.attachments || []).map((a) => ({ id: a.id, filename: a.original_filename }))
+  );
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     api.get("/subjects").then(({ data }) => {
       setSubjects(data);
-      if (data.length > 0) setSubject(data[0].name);
+      if (!isEdit && data.length > 0 && !subject) setSubject(data[0].name);
     }).catch(() => {});
     api.get("/users").then(({ data }) => setStudents(data)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleUpload = async (e) => {
@@ -267,13 +331,19 @@ function CreateTaskDialog({ onClose, onCreated }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await api.post("/tasks", {
+      const payload = {
         subject, title, description, due_date: dueDate,
         attachments: files.map((f) => f.id),
         assigned_to: assignedTo,
-      });
-      toast.success("Tarefa criada!");
-      onCreated();
+      };
+      if (isEdit) {
+        await api.put(`/tasks/${task.id}`, payload);
+        toast.success("Tarefa atualizada!");
+      } else {
+        await api.post("/tasks", payload);
+        toast.success("Tarefa criada!");
+      }
+      onSaved();
     } catch (err) {
       toast.error(formatApiError(err?.response?.data?.detail));
     } finally {
@@ -282,10 +352,10 @@ function CreateTaskDialog({ onClose, onCreated }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 nb-fade-in" data-testid="create-task-dialog">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 nb-fade-in" data-testid="task-dialog">
       <div className="nb-card bg-white w-full max-w-2xl max-h-[90vh] overflow-auto p-7">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-heading font-black text-2xl">Nova tarefa</h3>
+          <h3 className="font-heading font-black text-2xl">{isEdit ? "Editar tarefa" : "Nova tarefa"}</h3>
           <button onClick={onClose} className="nb-btn bg-white px-2 py-2" data-testid="close-task-dialog">
             <X className="w-4 h-4" />
           </button>
@@ -366,7 +436,7 @@ function CreateTaskDialog({ onClose, onCreated }) {
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
             <button type="submit" disabled={submitting || subjects.length === 0} className="nb-btn bg-sky-400 px-5 py-2.5" data-testid="submit-task-button">
-              {submitting ? "Salvando..." : "Criar tarefa"}
+              {submitting ? "Salvando..." : isEdit ? "Salvar alterações" : "Criar tarefa"}
             </button>
           </div>
         </form>

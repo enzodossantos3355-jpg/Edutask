@@ -96,9 +96,6 @@ export default function LoginPage() {
             <h1 className="font-heading font-black text-5xl xl:text-6xl leading-[1.05] text-black drop-shadow-[2px_2px_0_rgba(255,255,255,0.6)]">
               A lição de hoje, organizada para amanhã.
             </h1>
-            <p className="text-base text-black/80 max-w-md font-medium">
-              Professores criam, alunos completam. Anexos, prazos e progresso — tudo em um só lugar.
-            </p>
           </div>
           <div className="flex gap-3">
             <div className="nb-card bg-white px-3 py-2 flex items-center gap-2 text-sm font-bold">
