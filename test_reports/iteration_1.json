@@ -1,0 +1,39 @@
+{
+  "summary": "Backend regression suite for School Tasks app — 18 tests covering auth (profiles/login/me), users CRUD, tasks lifecycle with progress, completions (idempotent + role checks) and file upload/download. 17/18 passed (94%).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/", "issue": "Returns 404. Root route handler is registered AFTER app.include_router(api_router) (line 487 vs line 497 in server.py), so it is never attached to the app. Move the @api_router.get('/') decorator above app.include_router(api_router), OR call app.include_router after the route is defined."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix /api/ 404 by reordering api_router include OR moving @api_router.get('/') before app.include_router(api_router).",
+    "(Optional, design) get_current_user prefers cookie over Authorization header — when both are present, cookie wins. Tests had to drop session cookies to reliably exercise Bearer auth across users. Frontend should be consistent (use only one) to avoid stale-cookie surprises.",
+    "(Optional) seed_admin only updates password if current ADMIN_PASSWORD doesn't verify; consider also re-seeding name/role drift if needed."
+  ],
+  "critical_code_review_comments": [
+    "Route ordering bug: @api_router.get('/') is added to api_router AFTER app.include_router(api_router) — Starlette/FastAPI snapshots routes at include time, so the route silently 404s.",
+    "Auth precedence: cookie checked before Authorization header in get_current_user. If a client carries both, the cookie wins — can mask Bearer auth from frontend during dev.",
+    "verify_password is sync (bcrypt) inside async endpoints — fine for low traffic but blocks the loop on heavy concurrency. Consider asyncio.to_thread.",
+    "GET /api/tasks loads ALL students + ALL completions in memory and joins in Python — ok at MVP scale, but won't scale; consider aggregation pipeline.",
+    "File download via ?auth=token query param decodes JWT but does not check 'type'==access (unlike get_current_user). Should validate type and exp explicitly.",
+    "JWT_SECRET present in .env (committed). Make sure this is rotated for production and not source-controlled.",
+    "Root file size: server.py is ~500 lines and still ok, but auth/storage/tasks could be split into modules as it grows."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (created)",
+    "/app/test_reports/pytest/pytest_results.xml (generated)"
+  ],
+  "success_rate": {"backend": "94% (17/18)", "frontend": "n/a"},
+  "test_credentials": "Admin: admin@escola.com / enzo123cg. Test students are created on the fly via POST /api/users (prefix test_aluno_/test_del_) and cleaned up by fixtures.",
+  "seed_data_creation": "Each test creates its own student with TEST_/test_aluno_ prefix; teardown deletes them. No persistent seed beyond the seeded admin.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Suite at /app/backend/tests/backend_test.py uses BASE_URL from frontend/.env (REACT_APP_BACKEND_URL). Important: avoid sharing requests.Session across admin+student because login Set-Cookies will leak and cookie auth is checked before Authorization in get_current_user — tests use a no-cookie wrapper for that reason. File upload/download depends on Emergent object storage; tests skip if storage init fails (returns 500).",
+  "rca of the issue": "GET /api/ returns 404. Root cause: in /app/backend/server.py the call `app.include_router(api_router)` (line 487) executes BEFORE the `@api_router.get('/')` decorator (line 497). FastAPI/Starlette captures the router's routes at include time, so the late-added root route never makes it onto the app. Reproduction: curl $REACT_APP_BACKEND_URL/api/ -> 404. Mitigation: move the `@api_router.get('/')` block above `app.include_router(api_router)` (or move the include_router call to after the route definitions). Once moved, no further changes required."
+}
