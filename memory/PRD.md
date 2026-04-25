@@ -42,6 +42,19 @@
 - **Senhas visíveis ao admin** (eye toggle no card do aluno)
 - Backend: 27/27 testes ✅
 
+### Iteração 3 — Avisos + atribuição por aluno
+- **Sistema de avisos** (announcements):
+  - CRUD pelo admin (POST/GET/DELETE `/api/announcements`)
+  - Aba "Avisos" no painel admin com cards roxos
+  - Banner no topo do dashboard do aluno mostrando avisos atribuídos
+- **Atribuição de tarefas e avisos**:
+  - Componente `RecipientSelector` reutilizável (Todos / Alunos específicos com checkboxes)
+  - `assigned_to` em tarefas e avisos: `[]` = todos, `[ids]` = específicos
+  - Backend filtra `/api/tasks` e `/api/announcements` para aluno por atribuição
+  - Card admin mostra badge "Todos" ou "N alunos"
+  - Progresso da tarefa só conta os alunos atribuídos
+- Backend: 39/39 testes ✅
+
 ## Backlog (P1)
 - Notificações push/email para tarefas urgentes
 - Edição de tarefas (botão "Editar" — endpoint PUT já existe)
