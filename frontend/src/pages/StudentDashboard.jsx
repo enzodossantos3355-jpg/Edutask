@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter } from "lucide-react";
+import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter, Megaphone } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import { getPriority, formatDateBR, daysUntil } from "@/lib/priority";
@@ -10,6 +10,7 @@ const colorFor = (s) => subjectColors[(s || "").length % subjectColors.length];
 
 export default function StudentDashboard() {
   const [tasks, setTasks] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("todas");
   const [subjectFilter, setSubjectFilter] = useState("todas");
@@ -17,8 +18,12 @@ export default function StudentDashboard() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/tasks");
-      setTasks(data);
+      const [{ data: t }, { data: a }] = await Promise.all([
+        api.get("/tasks"),
+        api.get("/announcements"),
+      ]);
+      setTasks(t);
+      setAnnouncements(a);
     } catch (e) {
       toast.error(formatApiError(e?.response?.data?.detail));
     } finally {

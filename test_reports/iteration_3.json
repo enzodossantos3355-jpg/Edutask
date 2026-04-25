@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 3 backend testing: 39/39 tests passing. Validated new announcements endpoints + assigned_to filtering for tasks/announcements + iter2 regression.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/tasks/{id}", "issue": "update_task drops fields whose value is None or empty list (assigned_to=[] cannot be applied as 'reset to all') because update filters out 'v is not None' but model_dump(exclude_unset=True) already handles unset; current behavior: passing assigned_to=[] DOES persist (truthiness uses 'is not None'). However admin cannot also clear attachments via PUT-attachments=[] for the same reason. Verified assigned_to=[] update still works because [] is not None. No action needed for current scope."},
+      {"endpoint": "POST /api/auth/login", "issue": "Still no brute-force lockout (carried over from iter2)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_iter3_announcements_assignments.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "Optional: implement brute-force lockout per /app/auth_testing.md (5-fail).",
+    "Optional: hide admin from public /api/auth/profiles."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~660 lines; close to threshold. Recommend splitting into routers/ (auth, users, subjects, tasks, announcements, files) before next big iteration.",
+    "Announcements endpoints use the same secure patterns as tasks (admin-only writes, role-based reads, _id excluded). Good consistency.",
+    "Aluno announcement list does NOT enrich with recipients/all_students (correct privacy choice — students don't need to know who else got it).",
+    "_build_task_response correctly filters target_students by assigned_to so progress totals match the assignment scope. all_students bool also returned for UI.",
+    "TaskUpdate.model_dump(exclude_unset=True) correctly applies only fields explicitly sent — supports updating assigned_to to [] (broadcast) or [ids] (specific).",
+    "Cookies: secure=False (OK for preview env). For production, set secure=True with HTTPS and SameSite=None if cross-site.",
+    "No pagination on /api/announcements or /api/tasks — fine for a school app but worth noting if data grows."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter3_announcements_assignments.py"],
+  "success_rate": {"backend": "100% (39/39)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "admin@escola.com / enzo123cg (from /app/memory/test_credentials.md). Test students created/cleaned per fixture.",
+  "seed_data_creation": "Tests create TEST_-prefixed students, tasks, announcements and clean them up in fixtures. No persistent test data left.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Two test files now: /app/backend/tests/backend_test.py (27 regression tests for iter2) and /app/backend/tests/test_iter3_announcements_assignments.py (12 new tests). Run all with: pytest /app/backend/tests/ -v. Coverage: announcements CRUD (admin-only writes, broadcast vs targeted, aluno filtering, recipient enrichment for admin, all_students bool, 404 on double-delete, 400 on empty title/message); tasks assigned_to (specific student visibility, broadcast visibility, PUT updates assigned_to, target_students filters progress + total_students, all_students bool); regression of status gating + subjects seed. Frontend untested.",
+  "rca_of_the_issue": "n/a — all tests pass."
+}

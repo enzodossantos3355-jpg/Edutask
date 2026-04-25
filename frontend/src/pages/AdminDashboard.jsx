@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, MoreVertical } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
+import RecipientSelector from "@/components/RecipientSelector";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
 const STATUS_OPTS = [
@@ -29,6 +30,13 @@ export default function AdminDashboard() {
             <ListTodo className="w-4 h-4 inline mr-2" /> Tarefas
           </button>
           <button
+            onClick={() => setTab("announcements")}
+            className={`nb-btn px-5 py-2.5 ${tab === "announcements" ? "bg-violet-300" : "bg-white"}`}
+            data-testid="tab-announcements"
+          >
+            <Megaphone className="w-4 h-4 inline mr-2" /> Avisos
+          </button>
+          <button
             onClick={() => setTab("students")}
             className={`nb-btn px-5 py-2.5 ${tab === "students" ? "bg-amber-300" : "bg-white"}`}
             data-testid="tab-students"
@@ -44,6 +52,7 @@ export default function AdminDashboard() {
           </button>
         </div>
         {tab === "tasks" && <TasksPanel />}
+        {tab === "announcements" && <AnnouncementsPanel />}
         {tab === "students" && <StudentsPanel />}
         {tab === "subjects" && <SubjectsPanel />}
       </div>
@@ -138,6 +147,10 @@ function AdminTaskCard({ task, onDelete, index }) {
           <span className={`nb-badge ${priority.bg}`} data-testid={`task-priority-${task.id}`}>
             {priority.icon} {priority.label}
           </span>
+          <span className="nb-badge bg-white" data-testid={`task-recipients-${task.id}`}>
+            <Users className="w-3 h-3 inline mr-1 -mt-0.5" />
+            {task.all_students ? "Todos" : `${task.total_students} aluno${task.total_students === 1 ? "" : "s"}`}
+          </span>
         </div>
         <button
           onClick={onDelete}
@@ -211,6 +224,8 @@ function FileLink({ file }) {
 function CreateTaskDialog({ onClose, onCreated }) {
   const [subject, setSubject] = useState("");
   const [subjects, setSubjects] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [assignedTo, setAssignedTo] = useState([]); // [] = all
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -223,6 +238,7 @@ function CreateTaskDialog({ onClose, onCreated }) {
       setSubjects(data);
       if (data.length > 0) setSubject(data[0].name);
     }).catch(() => {});
+    api.get("/users").then(({ data }) => setStudents(data)).catch(() => {});
   }, []);
 
   const handleUpload = async (e) => {
@@ -254,6 +270,7 @@ function CreateTaskDialog({ onClose, onCreated }) {
       await api.post("/tasks", {
         subject, title, description, due_date: dueDate,
         attachments: files.map((f) => f.id),
+        assigned_to: assignedTo,
       });
       toast.success("Tarefa criada!");
       onCreated();
@@ -336,6 +353,15 @@ function CreateTaskDialog({ onClose, onCreated }) {
                 ))}
               </div>
             )}
+          </div>
+          <div>
+            <label className="block text-sm font-bold mb-1.5">Destinatários</label>
+            <RecipientSelector
+              students={students}
+              value={assignedTo}
+              onChange={setAssignedTo}
+              testIdPrefix="task-recipients"
+            />
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
@@ -681,6 +707,184 @@ function EmptyState({ icon: Icon, title, subtitle }) {
       </div>
       <h3 className="font-heading font-bold text-xl mb-1">{title}</h3>
       <p className="text-neutral-600 text-sm">{subtitle}</p>
+    </div>
+  );
+}
+
+// --- Announcements panel ---
+function AnnouncementsPanel() {
+  const [items, setItems] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [{ data: anns }, { data: studs }] = await Promise.all([
+        api.get("/announcements"),
+        api.get("/users"),
+      ]);
+      setItems(anns);
+      setStudents(studs);
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onDelete = async () => {
+    if (!confirmDelete) return;
+    try {
+      await api.delete(`/announcements/${confirmDelete.id}`);
+      toast.success("Aviso removido");
+      setConfirmDelete(null);
+      load();
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
+        <div>
+          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Avisos</h1>
+          <p className="text-neutral-600 mt-1">Comunique-se com seus alunos. Avisos aparecem no dashboard deles.</p>
+        </div>
+        <button
+          onClick={() => setCreating(true)}
+          className="nb-btn bg-violet-300 px-5 py-3 flex items-center gap-2"
+          data-testid="open-create-announcement-button"
+        >
+          <Plus className="w-4 h-4" strokeWidth={3} /> Novo aviso
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="text-neutral-500">Carregando...</p>
+      ) : items.length === 0 ? (
+        <EmptyState icon={Megaphone} title="Nenhum aviso publicado" subtitle="Clique em 'Novo aviso' para criar." />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {items.map((a, i) => (
+            <div key={a.id} className="nb-card nb-card-hover p-5 nb-fade-in" style={{ animationDelay: `${i * 50}ms` }} data-testid={`announcement-card-${a.id}`}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="w-10 h-10 nb-card flex items-center justify-center bg-violet-200 flex-shrink-0">
+                  <Megaphone className="w-5 h-5" strokeWidth={2.5} />
+                </div>
+                <button
+                  onClick={() => setConfirmDelete({ id: a.id, label: a.title })}
+                  className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
+                  data-testid={`delete-announcement-${a.id}`}
+                  aria-label="Remover aviso"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+              <h3 className="font-heading font-bold text-lg leading-tight mb-1">{a.title}</h3>
+              <p className="text-sm text-neutral-700 whitespace-pre-wrap mb-3">{a.message}</p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="nb-badge bg-white">
+                  <Users className="w-3 h-3 inline mr-1 -mt-0.5" />
+                  {a.all_students
+                    ? "Todos os alunos"
+                    : `${(a.recipients || []).length} aluno${(a.recipients || []).length === 1 ? "" : "s"}`}
+                </span>
+                <span className="text-neutral-500">{formatDateBR(a.created_at)}</span>
+              </div>
+              {!a.all_students && (a.recipients || []).length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {(a.recipients || []).slice(0, 5).map((r) => (
+                    <span key={r.id} className="nb-badge bg-sky-100 text-xs">{r.name}</span>
+                  ))}
+                  {(a.recipients || []).length > 5 && (
+                    <span className="nb-badge bg-white text-xs">+{(a.recipients || []).length - 5}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {creating && (
+        <CreateAnnouncementDialog
+          students={students}
+          onClose={() => setCreating(false)}
+          onCreated={() => { setCreating(false); load(); }}
+        />
+      )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Remover aviso?"
+          message={`Tem certeza que deseja remover "${confirmDelete.label}"?`}
+          confirmLabel="Remover"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={onDelete}
+        />
+      )}
+    </div>
+  );
+}
+
+function CreateAnnouncementDialog({ students, onClose, onCreated }) {
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [assignedTo, setAssignedTo] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.post("/announcements", { title, message, assigned_to: assignedTo });
+      toast.success("Aviso publicado!");
+      onCreated();
+    } catch (err) {
+      toast.error(formatApiError(err?.response?.data?.detail));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="create-announcement-dialog">
+      <div className="nb-card bg-white w-full max-w-xl max-h-[90vh] overflow-auto p-7">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-heading font-black text-2xl">Novo aviso</h3>
+          <button onClick={onClose} className="nb-btn bg-white px-2 py-2"><X className="w-4 h-4" /></button>
+        </div>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-bold mb-1.5">Título</label>
+            <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: Reunião de pais" className="nb-input" data-testid="announcement-title-input" />
+          </div>
+          <div>
+            <label className="block text-sm font-bold mb-1.5">Mensagem</label>
+            <textarea required rows={4} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Detalhes do aviso..." className="nb-input resize-y" data-testid="announcement-message-input" />
+          </div>
+          <div>
+            <label className="block text-sm font-bold mb-1.5">Destinatários</label>
+            <RecipientSelector
+              students={students}
+              value={assignedTo}
+              onChange={setAssignedTo}
+              testIdPrefix="announcement-recipients"
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-1">
+            <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
+            <button type="submit" disabled={submitting} className="nb-btn bg-violet-300 px-5 py-2.5" data-testid="submit-announcement-button">
+              {submitting ? "Publicando..." : "Publicar aviso"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

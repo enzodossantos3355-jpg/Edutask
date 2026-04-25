@@ -152,6 +152,7 @@ class TaskCreate(BaseModel):
     description: str
     due_date: str  # ISO date
     attachments: List[str] = []  # list of file ids
+    assigned_to: List[str] = []  # list of student ids; empty = all students
 
 
 class TaskUpdate(BaseModel):
@@ -160,6 +161,13 @@ class TaskUpdate(BaseModel):
     description: Optional[str] = None
     due_date: Optional[str] = None
     attachments: Optional[List[str]] = None
+    assigned_to: Optional[List[str]] = None
+
+
+class AnnouncementCreate(BaseModel):
+    title: str
+    message: str
+    assigned_to: List[str] = []  # empty = all students
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +417,11 @@ async def _build_task_response(task: dict, students: list, completions_by_task: 
         files = await cursor.to_list(100)
     task_completions = completions_by_task.get(task["id"], [])
     completed_user_ids = {c["user_id"] for c in task_completions}
+    assigned_to = task.get("assigned_to", []) or []
+    # Filter "students" to only the assigned ones (or all if no filter)
+    target_students = students if not assigned_to else [s for s in students if s["id"] in assigned_to]
     progress = []
-    for s in students:
+    for s in target_students:
         progress.append({
             "user_id": s["id"], "name": s["name"], "email": s["email"],
             "completed": s["id"] in completed_user_ids,
@@ -420,8 +431,9 @@ async def _build_task_response(task: dict, students: list, completions_by_task: 
         **task,
         "attachments": files,
         "progress": progress,
-        "completed_count": len(completed_user_ids),
-        "total_students": len(students),
+        "completed_count": sum(1 for p in progress if p["completed"]),
+        "total_students": len(target_students),
+        "all_students": not assigned_to,
     }
 
 
@@ -435,6 +447,7 @@ async def create_task(payload: TaskCreate, user: dict = Depends(require_admin)):
         "description": payload.description.strip(),
         "due_date": payload.due_date,
         "attachments": payload.attachments,
+        "assigned_to": payload.assigned_to,  # [] = all students
         "created_by": user["id"],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -456,10 +469,14 @@ async def list_tasks(user: dict = Depends(get_current_user)):
     if user["role"] == "admin":
         return [await _build_task_response(t, students, completions_by_task) for t in tasks]
 
-    # Aluno: just include their own completion state
+    # Aluno: filter by assignment + include their own completion state
     my_completed = {c["task_id"] for c in completions if c["user_id"] == user["id"]}
     result = []
     for t in tasks:
+        assigned = t.get("assigned_to", []) or []
+        # empty list = all students; otherwise must include this user
+        if assigned and user["id"] not in assigned:
+            continue
         file_ids = t.get("attachments", []) or []
         files = []
         if file_ids:
@@ -473,6 +490,59 @@ async def list_tasks(user: dict = Depends(get_current_user)):
             "completed_at": my_completion["completed_at"] if my_completion else None,
         })
     return result
+
+
+# ---------------------------------------------------------------------------
+# Announcements (avisos)
+# ---------------------------------------------------------------------------
+@api_router.post("/announcements")
+async def create_announcement(payload: AnnouncementCreate, user: dict = Depends(require_admin)):
+    title = payload.title.strip()
+    message = payload.message.strip()
+    if not title or not message:
+        raise HTTPException(status_code=400, detail="Título e mensagem obrigatórios")
+    aid = str(uuid.uuid4())
+    doc = {
+        "id": aid,
+        "title": title,
+        "message": message,
+        "assigned_to": payload.assigned_to,
+        "created_by": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.announcements.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/announcements")
+async def list_announcements(user: dict = Depends(get_current_user)):
+    items = await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    if user["role"] == "admin":
+        # attach recipient summary for admin view
+        students = await db.users.find({"role": "aluno"}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+        student_by_id = {s["id"]: s for s in students}
+        for a in items:
+            assigned = a.get("assigned_to", []) or []
+            a["recipients"] = (
+                [{"id": sid, "name": student_by_id.get(sid, {}).get("name", "?")} for sid in assigned]
+                if assigned else []
+            )
+            a["all_students"] = not assigned
+        return items
+    # Aluno: filter by assignment
+    return [
+        a for a in items
+        if not a.get("assigned_to") or user["id"] in a.get("assigned_to", [])
+    ]
+
+
+@api_router.delete("/announcements/{ann_id}")
+async def delete_announcement(ann_id: str, _: dict = Depends(require_admin)):
+    result = await db.announcements.delete_one({"id": ann_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Aviso não encontrado")
+    return {"ok": True}
 
 
 @api_router.put("/tasks/{task_id}")
@@ -531,6 +601,7 @@ async def on_startup():
     await db.completions.create_index([("task_id", 1), ("user_id", 1)], unique=True)
     await db.files.create_index("id", unique=True)
     await db.subjects.create_index("id", unique=True)
+    await db.announcements.create_index("id", unique=True)
 
     # Seed default subjects (only on empty collection)
     if await db.subjects.count_documents({}) == 0:
