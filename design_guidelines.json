@@ -1,0 +1,85 @@
+{
+  "theme": "Light",
+  "archetype": "Archetype 3 (Pastel & Soft) with Neo-Brutalist contrast",
+  "design_philosophy": "Friendly, optimistic, and structured. Uses pastel backgrounds with hard black borders and offset shadows to make the dashboard engaging for students while keeping it highly functional for admins.",
+  "colors": {
+    "background": "#FAFAFA",
+    "surface": "#FFFFFF",
+    "primary": "#38BDF8", 
+    "secondary": "#FBBF24",
+    "accent": "#F87171",
+    "text_main": "#0A0A0A",
+    "text_muted": "#525252",
+    "border": "#0A0A0A",
+    "role_admin": "#FCA5A5",
+    "role_student": "#BAE6FD"
+  },
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "DM Sans",
+    "scale": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-black",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-bold",
+      "h3": "text-xl font-bold",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm font-medium",
+      "badge": "text-xs font-bold tracking-wider uppercase"
+    }
+  },
+  "spacing_and_layout": {
+    "general": "Generous spacing. p-6 to p-8 inside cards. Gap-6 between grid items.",
+    "dashboard_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "sidebar": "w-64 border-r-2 border-black bg-amber-50/50 p-6 flex flex-col gap-4",
+    "main_content": "flex-1 p-8 md:p-12 bg-[#FAFAFA]"
+  },
+  "components": {
+    "cards": {
+      "base": "bg-white border-2 border-black rounded-xl p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-transform",
+      "hover": "hover:-translate-y-1 hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]",
+      "active": "active:translate-y-1 active:translate-x-1 active:shadow-none"
+    },
+    "buttons": {
+      "primary": "bg-sky-400 text-black border-2 border-black rounded-lg px-6 py-3 font-bold shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:translate-x-1 active:shadow-none transition-all",
+      "secondary": "bg-amber-300 text-black border-2 border-black rounded-lg px-6 py-3 font-bold shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5 hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:translate-x-1 active:shadow-none transition-all"
+    },
+    "badges": {
+      "admin": "bg-red-300 text-black border-2 border-black rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide",
+      "student": "bg-sky-300 text-black border-2 border-black rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide"
+    },
+    "inputs": {
+      "base": "w-full bg-white border-2 border-black rounded-lg px-4 py-3 focus:outline-none focus:ring-4 focus:ring-sky-200 transition-all text-black placeholder:text-neutral-400"
+    },
+    "file_upload": {
+      "base": "w-full border-2 border-dashed border-black rounded-xl bg-sky-50 p-8 flex flex-col items-center justify-center cursor-pointer hover:bg-sky-100 transition-colors"
+    }
+  },
+  "animations": {
+    "hover": "Quick structural transitions (0.15s ease-out) for offset shadows and transforms.",
+    "list_stagger": "Framer motion staggered entrance for task lists (y: 20, opacity: 0 -> y: 0, opacity: 1)."
+  },
+  "media": {
+    "images": [
+      {
+        "category": "login_background",
+        "url": "https://images.pexels.com/photos/28503354/pexels-photo-28503354.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Colorful school supplies including notebook, pencil case, and tablet on a desk. Used for the split-screen login page."
+      }
+    ],
+    "icons": {
+      "library": "lucide-react",
+      "style": "Bold, 24px, 2px stroke width to match the neo-brutalist aesthetic."
+    }
+  },
+  "accessibility_and_testing": {
+    "contrast": "Extremely high contrast due to black borders and text on pastel backgrounds.",
+    "testing": "All interactive elements must include data-testid attributes (e.g., data-testid='login-button', data-testid='task-card-1')."
+  },
+  "instructions_to_main_agent": [
+    "Use standard HTML/Tailwind for the main structural layouts (sidebar, grid) to easily implement the hard offset shadows and borders.",
+    "For complex interactives (Dropdowns, Dialogs for creating tasks, DatePicker for deadlines), use Shadcn UI but aggressively override the default styling to match the Neo-brutalist (border-2 border-black, sharp shadows) theme.",
+    "Implement a clear visual toggle or indication for Admin vs Aluno views.",
+    "Ensure all text is in Portuguese (PT-BR) as requested.",
+    "For file uploads, use an aesthetically pleasing dashed dropzone.",
+    "Maintain the layout density: 'Control Room' for admins (data heavy, lists of students and tasks) and 'Bento' grid for students (engaging task cards)."
+  ]
+}
