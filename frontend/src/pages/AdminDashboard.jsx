@@ -4,6 +4,8 @@ import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, 
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
+import MyProfileBanner from "@/components/MyProfileBanner";
+import AvatarUploader from "@/components/AvatarUploader";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
 const STATUS_OPTS = [
@@ -21,6 +23,7 @@ export default function AdminDashboard() {
     <div className="min-h-screen bg-[#FAFAFA]">
       <AppHeader title="Painel do Administrador" />
       <div className="max-w-7xl mx-auto px-6 py-8">
+        <MyProfileBanner />
         <div className="flex flex-wrap gap-3 mb-8">
           <button
             onClick={() => setTab("tasks")}
@@ -517,9 +520,15 @@ function StudentsPanel() {
             return (
               <div key={s.id} className="nb-card nb-card-hover p-5 nb-fade-in" style={{ animationDelay: `${i * 50}ms` }} data-testid={`student-card-${s.id}`}>
                 <div className="flex items-start justify-between gap-3 mb-3">
-                  <div className="w-12 h-12 nb-card flex items-center justify-center bg-sky-200 font-heading font-black text-lg">
-                    {s.name?.[0]?.toUpperCase() || "A"}
-                  </div>
+                  <AvatarUploader
+                    userId={s.id}
+                    name={s.name}
+                    hasAvatar={s.has_avatar}
+                    onChanged={() => load()}
+                    path={`/users/${s.id}/avatar`}
+                    size={56}
+                    bg="bg-sky-200"
+                  />
                   <button
                     onClick={() => setConfirmDelete({ id: s.id, label: s.name })}
                     className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
@@ -787,6 +796,7 @@ function AnnouncementsPanel() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const load = useCallback(async () => {
@@ -819,6 +829,34 @@ function AnnouncementsPanel() {
     }
   };
 
+  const copyAnnouncement = async (a) => {
+    const recipients = a.all_students
+      ? "Todos os alunos"
+      : (a.recipients || []).map((r) => r.name).join(", ") || "—";
+    const text = [
+      `📣 ${a.title}`,
+      `👥 Destinatários: ${recipients}`,
+      `📅 ${formatDateBR(a.created_at)}`,
+      "",
+      a.message,
+    ].join("\n");
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      toast.success("Aviso copiado!");
+    } catch {
+      toast.error("Não foi possível copiar");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
@@ -847,14 +885,35 @@ function AnnouncementsPanel() {
                 <div className="w-10 h-10 nb-card flex items-center justify-center bg-violet-200 flex-shrink-0">
                   <Megaphone className="w-5 h-5" strokeWidth={2.5} />
                 </div>
-                <button
-                  onClick={() => setConfirmDelete({ id: a.id, label: a.title })}
-                  className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
-                  data-testid={`delete-announcement-${a.id}`}
-                  aria-label="Remover aviso"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <button
+                    onClick={() => copyAnnouncement(a)}
+                    className="nb-btn bg-white hover:bg-sky-100 px-2 py-2"
+                    data-testid={`copy-announcement-${a.id}`}
+                    aria-label="Copiar aviso"
+                    title="Copiar"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setEditing(a)}
+                    className="nb-btn bg-amber-200 hover:bg-amber-300 px-2 py-2"
+                    data-testid={`edit-announcement-${a.id}`}
+                    aria-label="Editar aviso"
+                    title="Editar"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete({ id: a.id, label: a.title })}
+                    className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
+                    data-testid={`delete-announcement-${a.id}`}
+                    aria-label="Remover aviso"
+                    title="Excluir"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               <h3 className="font-heading font-bold text-lg leading-tight mb-1">{a.title}</h3>
               <p className="text-sm text-neutral-700 whitespace-pre-wrap mb-3">{a.message}</p>
@@ -883,10 +942,18 @@ function AnnouncementsPanel() {
       )}
 
       {creating && (
-        <CreateAnnouncementDialog
+        <AnnouncementDialog
           students={students}
           onClose={() => setCreating(false)}
-          onCreated={() => { setCreating(false); load(); }}
+          onSaved={() => { setCreating(false); load(); }}
+        />
+      )}
+      {editing && (
+        <AnnouncementDialog
+          announcement={editing}
+          students={students}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
         />
       )}
       {confirmDelete && (
@@ -902,19 +969,26 @@ function AnnouncementsPanel() {
   );
 }
 
-function CreateAnnouncementDialog({ students, onClose, onCreated }) {
-  const [title, setTitle] = useState("");
-  const [message, setMessage] = useState("");
-  const [assignedTo, setAssignedTo] = useState([]);
+function AnnouncementDialog({ announcement, students, onClose, onSaved }) {
+  const isEdit = Boolean(announcement);
+  const [title, setTitle] = useState(announcement?.title || "");
+  const [message, setMessage] = useState(announcement?.message || "");
+  const [assignedTo, setAssignedTo] = useState(announcement?.assigned_to || []);
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await api.post("/announcements", { title, message, assigned_to: assignedTo });
-      toast.success("Aviso publicado!");
-      onCreated();
+      const payload = { title, message, assigned_to: assignedTo };
+      if (isEdit) {
+        await api.put(`/announcements/${announcement.id}`, payload);
+        toast.success("Aviso atualizado!");
+      } else {
+        await api.post("/announcements", payload);
+        toast.success("Aviso publicado!");
+      }
+      onSaved();
     } catch (err) {
       toast.error(formatApiError(err?.response?.data?.detail));
     } finally {
@@ -923,10 +997,10 @@ function CreateAnnouncementDialog({ students, onClose, onCreated }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="create-announcement-dialog">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="announcement-dialog">
       <div className="nb-card bg-white w-full max-w-xl max-h-[90vh] overflow-auto p-7">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-heading font-black text-2xl">Novo aviso</h3>
+          <h3 className="font-heading font-black text-2xl">{isEdit ? "Editar aviso" : "Novo aviso"}</h3>
           <button onClick={onClose} className="nb-btn bg-white px-2 py-2"><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -950,7 +1024,7 @@ function CreateAnnouncementDialog({ students, onClose, onCreated }) {
           <div className="flex justify-end gap-3 pt-1">
             <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
             <button type="submit" disabled={submitting} className="nb-btn bg-violet-300 px-5 py-2.5" data-testid="submit-announcement-button">
-              {submitting ? "Publicando..." : "Publicar aviso"}
+              {submitting ? "Salvando..." : isEdit ? "Salvar alterações" : "Publicar aviso"}
             </button>
           </div>
         </form>

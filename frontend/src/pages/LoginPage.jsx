@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { BookOpen, Pencil, ArrowLeft, ShieldCheck, User, Wrench, Lock } from "lucide-react";
+import { ArrowLeft, ShieldCheck, User, Wrench, Lock } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import Logo from "@/components/Logo";
+import Avatar from "@/components/Avatar";
 
 const STATUS_META = {
   active: { label: null, icon: null, bg: null, dim: false },
@@ -143,8 +144,15 @@ export default function LoginPage() {
                         style={{ animationDelay: `${i * 50}ms` }}
                         data-testid={`profile-${p.id}`}
                       >
-                        <div className={`w-20 h-20 mx-auto mb-3 nb-card flex items-center justify-center font-heading font-black text-3xl ${p.role === "admin" ? "bg-red-300" : "bg-sky-300"} ${meta.dim ? "grayscale" : ""}`}>
-                          {p.name?.[0]?.toUpperCase() || "?"}
+                        <div className="mx-auto mb-3 inline-block">
+                          <Avatar
+                            userId={p.id}
+                            name={p.name}
+                            size={80}
+                            hasAvatar={p.has_avatar}
+                            bg={p.role === "admin" ? "bg-red-300" : "bg-sky-300"}
+                            className={meta.dim ? "grayscale" : ""}
+                          />
                         </div>
                         <div className="font-heading font-bold text-base leading-tight truncate">{p.name}</div>
                         {meta.label ? (
@@ -180,8 +188,14 @@ export default function LoginPage() {
               </button>
 
               <div className="text-center mb-6">
-                <div className={`w-24 h-24 mx-auto nb-card flex items-center justify-center font-heading font-black text-4xl mb-4 ${selected.role === "admin" ? "bg-red-300" : "bg-sky-300"}`}>
-                  {selected.name?.[0]?.toUpperCase() || "?"}
+                <div className="mx-auto inline-block mb-4">
+                  <Avatar
+                    userId={selected.id}
+                    name={selected.name}
+                    size={96}
+                    hasAvatar={selected.has_avatar}
+                    bg={selected.role === "admin" ? "bg-red-300" : "bg-sky-300"}
+                  />
                 </div>
                 <h2 className="font-heading font-black text-2xl mb-1">Olá, {selected.name}!</h2>
                 <span className={`nb-badge inline-flex items-center gap-1 ${selected.role === "admin" ? "bg-red-200" : "bg-sky-200"}`}>

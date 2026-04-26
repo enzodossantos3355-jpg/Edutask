@@ -1,6 +1,7 @@
 import { LogOut } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import Logo from "@/components/Logo";
+import Avatar from "@/components/Avatar";
 
 export default function AppHeader({ title }) {
   const { user, logout } = useAuth();
@@ -18,6 +19,15 @@ export default function AppHeader({ title }) {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {user && (
+            <Avatar
+              userId={user.id}
+              name={user.name}
+              size={36}
+              hasAvatar={user.has_avatar}
+              bg={badgeClass}
+            />
+          )}
           <div className="hidden sm:flex flex-col items-end leading-tight">
             <span className="font-bold text-sm" data-testid="user-name">{user?.name}</span>
             {user?.role === "admin" && (

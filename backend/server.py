@@ -117,6 +117,7 @@ class ProfileOut(BaseModel):
     name: str
     role: str
     status: str = "active"
+    has_avatar: bool = False
 
 
 class UserCreate(BaseModel):
@@ -135,6 +136,7 @@ class UserOut(BaseModel):
     status: str = "active"
     created_at: str
     password: Optional[str] = None  # plain-text password, only returned to admin for aluno accounts
+    has_avatar: bool = False
 
 
 class SubjectCreate(BaseModel):
@@ -170,6 +172,12 @@ class AnnouncementCreate(BaseModel):
     assigned_to: List[str] = []  # empty = all students
 
 
+class AnnouncementUpdate(BaseModel):
+    title: Optional[str] = None
+    message: Optional[str] = None
+    assigned_to: Optional[List[str]] = None
+
+
 # ---------------------------------------------------------------------------
 # App + router
 # ---------------------------------------------------------------------------
@@ -189,9 +197,12 @@ async def get_current_user(request: Request) -> dict:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Token inválido")
-        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0, "password_plain": 0})
         if not user:
             raise HTTPException(status_code=401, detail="Usuário não encontrado")
+        # Expose has_avatar instead of internal storage path
+        user["has_avatar"] = bool(user.pop("avatar_path", None))
+        user.pop("avatar_content_type", None)
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado")
@@ -210,10 +221,11 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 # ---------------------------------------------------------------------------
 @api_router.get("/auth/profiles", response_model=List[ProfileOut])
 async def list_profiles():
-    """Public endpoint: lists all profiles (id + name + role + status)."""
-    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1}).to_list(1000)
+    """Public endpoint: lists all profiles (id + name + role + status + has_avatar)."""
+    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "avatar_path": 1}).to_list(1000)
     for u in users:
         u.setdefault("status", "active")
+        u["has_avatar"] = bool(u.pop("avatar_path", None))
     users.sort(key=lambda u: (0 if u["role"] == "admin" else 1, u["name"].lower()))
     return [ProfileOut(**u) for u in users]
 
@@ -244,6 +256,7 @@ async def login(payload: LoginRequest, response: Response):
         "user": {
             "id": user["id"], "email": user["email"], "name": user["name"],
             "role": user["role"], "created_at": user["created_at"],
+            "has_avatar": bool(user.get("avatar_path")),
         },
     }
 
@@ -290,7 +303,7 @@ async def create_user(payload: UserCreate, _: dict = Depends(require_admin)):
 async def list_users(_: dict = Depends(require_admin)):
     users = await db.users.find(
         {"role": "aluno"},
-        {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "created_at": 1, "password_plain": 1},
+        {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "created_at": 1, "password_plain": 1, "avatar_path": 1},
     ).sort("created_at", -1).to_list(1000)
     return [
         UserOut(
@@ -298,6 +311,7 @@ async def list_users(_: dict = Depends(require_admin)):
             status=u.get("status", "active"),
             created_at=u["created_at"],
             password=u.get("password_plain"),
+            has_avatar=bool(u.get("avatar_path")),
         )
         for u in users
     ]
@@ -313,6 +327,75 @@ async def update_user_status(user_id: str, payload: StatusUpdate, _: dict = Depe
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Aluno não encontrado")
     return {"ok": True, "status": payload.status}
+
+
+# ---------------------------------------------------------------------------
+# Avatars (profile photos) - users upload their own, admin can manage anyone's
+# ---------------------------------------------------------------------------
+ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+async def _save_avatar(user_id: str, file: UploadFile) -> dict:
+    if file.content_type not in ALLOWED_AVATAR_TYPES:
+        raise HTTPException(status_code=400, detail="Formato inválido. Use JPG, PNG, WEBP ou GIF.")
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Imagem muito grande (máx 5MB)")
+    ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "jpg").lower()
+    path = f"{APP_NAME}/avatars/{user_id}.{ext}"
+    put_object(path, data, file.content_type)
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"avatar_path": path, "avatar_content_type": file.content_type, "avatar_updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True}
+
+
+async def _remove_avatar(user_id: str):
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$unset": {"avatar_path": "", "avatar_content_type": "", "avatar_updated_at": ""}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+
+@api_router.post("/me/avatar")
+async def upload_my_avatar(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    return await _save_avatar(user["id"], file)
+
+
+@api_router.delete("/me/avatar")
+async def delete_my_avatar(user: dict = Depends(get_current_user)):
+    await _remove_avatar(user["id"])
+    return {"ok": True}
+
+
+@api_router.post("/users/{user_id}/avatar")
+async def upload_user_avatar(user_id: str, file: UploadFile = File(...), _: dict = Depends(require_admin)):
+    if not await db.users.find_one({"id": user_id}):
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return await _save_avatar(user_id, file)
+
+
+@api_router.delete("/users/{user_id}/avatar")
+async def delete_user_avatar(user_id: str, _: dict = Depends(require_admin)):
+    await _remove_avatar(user_id)
+    return {"ok": True}
+
+
+@api_router.get("/avatars/{user_id}")
+async def get_avatar(user_id: str):
+    """Public endpoint - returns the avatar image bytes (or 404)."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "avatar_path": 1, "avatar_content_type": 1})
+    if not user or not user.get("avatar_path"):
+        raise HTTPException(status_code=404, detail="Avatar não encontrado")
+    data, ct = get_object(user["avatar_path"])
+    return FastResponse(
+        content=data,
+        media_type=user.get("avatar_content_type", ct),
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +624,21 @@ async def list_announcements(user: dict = Depends(get_current_user)):
 async def delete_announcement(ann_id: str, _: dict = Depends(require_admin)):
     result = await db.announcements.delete_one({"id": ann_id})
     if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Aviso não encontrado")
+    return {"ok": True}
+
+
+@api_router.put("/announcements/{ann_id}")
+async def update_announcement(ann_id: str, payload: AnnouncementUpdate, _: dict = Depends(require_admin)):
+    update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if "title" in update:
+        update["title"] = update["title"].strip()
+    if "message" in update:
+        update["message"] = update["message"].strip()
+    if not update:
+        raise HTTPException(status_code=400, detail="Nada para atualizar")
+    result = await db.announcements.update_one({"id": ann_id}, {"$set": update})
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Aviso não encontrado")
     return {"ok": True}
 
