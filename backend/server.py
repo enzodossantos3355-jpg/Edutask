@@ -125,6 +125,11 @@ class UserCreate(BaseModel):
     password: str
 
 
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    password: Optional[str] = None
+
+
 class StatusUpdate(BaseModel):
     status: str  # "active" | "maintenance" | "blocked"
 
@@ -327,6 +332,45 @@ async def update_user_status(user_id: str, payload: StatusUpdate, _: dict = Depe
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Aluno não encontrado")
     return {"ok": True, "status": payload.status}
+
+
+async def _apply_user_update(user_id: str, payload: UserUpdate, role_filter: Optional[str] = None) -> dict:
+    update: dict = {}
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Nome não pode ser vazio")
+        # Ensure unique among alunos (admin name change skips this check by role_filter)
+        existing = await db.users.find_one({"id": {"$ne": user_id}, "name": name, "role": "aluno"})
+        if existing:
+            raise HTTPException(status_code=400, detail="Já existe um aluno com este nome")
+        update["name"] = name
+    if payload.password is not None:
+        if len(payload.password) < 4:
+            raise HTTPException(status_code=400, detail="Senha deve ter ao menos 4 caracteres")
+        update["password_hash"] = hash_password(payload.password)
+        update["password_plain"] = payload.password
+    if not update:
+        raise HTTPException(status_code=400, detail="Nada para atualizar")
+    query = {"id": user_id}
+    if role_filter:
+        query["role"] = role_filter
+    result = await db.users.update_one(query, {"$set": update})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return {"ok": True}
+
+
+@api_router.patch("/me")
+async def update_me(payload: UserUpdate, user: dict = Depends(get_current_user)):
+    """Authenticated user updates their own name and/or password."""
+    return await _apply_user_update(user["id"], payload)
+
+
+@api_router.patch("/users/{user_id}")
+async def update_user(user_id: str, payload: UserUpdate, _: dict = Depends(require_admin)):
+    """Admin updates any aluno's name and/or password."""
+    return await _apply_user_update(user_id, payload, role_filter="aluno")
 
 
 # ---------------------------------------------------------------------------

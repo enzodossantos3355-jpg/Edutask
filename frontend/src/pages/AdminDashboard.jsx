@@ -6,6 +6,7 @@ import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
 import MyProfileBanner from "@/components/MyProfileBanner";
 import AvatarUploader from "@/components/AvatarUploader";
+import EditProfileDialog from "@/components/EditProfileDialog";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
 const STATUS_OPTS = [
@@ -453,6 +454,7 @@ function StudentsPanel() {
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [revealedIds, setRevealedIds] = useState(new Set());
 
@@ -529,14 +531,25 @@ function StudentsPanel() {
                     size={56}
                     bg="bg-sky-200"
                   />
-                  <button
-                    onClick={() => setConfirmDelete({ id: s.id, label: s.name })}
-                    className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
-                    data-testid={`delete-student-${s.id}`}
-                    aria-label="Remover aluno"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex flex-col gap-1.5">
+                    <button
+                      onClick={() => setEditing(s)}
+                      className="nb-btn bg-amber-200 hover:bg-amber-300 px-2 py-2"
+                      data-testid={`edit-student-${s.id}`}
+                      aria-label="Editar perfil"
+                      title="Editar nome / senha"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete({ id: s.id, label: s.name })}
+                      className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-2"
+                      data-testid={`delete-student-${s.id}`}
+                      aria-label="Remover aluno"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
                 <h3 className="font-heading font-bold text-lg leading-tight">{s.name}</h3>
 
@@ -590,6 +603,15 @@ function StudentsPanel() {
       )}
 
       {creating && <CreateStudentDialog onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />}
+      {editing && (
+        <EditProfileDialog
+          initialName={editing.name}
+          path={`/users/${editing.id}`}
+          label={`aluno: ${editing.name}`}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
       {confirmDelete && (
         <ConfirmDialog
           title="Remover aluno?"
