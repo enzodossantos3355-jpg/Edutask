@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldCheck, User, Wrench, Lock } from "lucide-react";
+import { ArrowLeft, ShieldCheck, User, Wrench, Lock, BookOpen, Pencil } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import Logo from "@/components/Logo";
