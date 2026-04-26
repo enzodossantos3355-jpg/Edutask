@@ -34,23 +34,29 @@ export default function MyProfileBanner({ bg = "bg-amber-200" }) {
           <div>
             <p className="font-heading font-bold text-lg leading-tight">{user.name}</p>
             <p className="text-xs text-neutral-700">{user.role === "admin" ? "Administrador" : "Aluno"}</p>
-            <button
-              onClick={() => setEditing(true)}
-              className="nb-btn bg-white hover:bg-sky-100 px-3 py-1 text-xs flex items-center gap-1.5 mt-2"
-              data-testid="open-edit-profile-button"
-            >
-              <Pencil className="w-3 h-3" />
-              Editar nome / senha
-            </button>
+            {user.role === "admin" && (
+              <button
+                onClick={() => setEditing(true)}
+                className="nb-btn bg-white hover:bg-sky-100 px-3 py-1 text-xs flex items-center gap-1.5 mt-2"
+                data-testid="open-edit-profile-button"
+              >
+                <Pencil className="w-3 h-3" />
+                Editar nome / senha
+              </button>
+            )}
           </div>
         </div>
         <div className="text-sm text-neutral-700 max-w-sm">
           <p className="font-bold mb-1">Personalize seu perfil</p>
-          <p>Sua foto e nome aparecem na tela de seleção de perfil.</p>
+          <p>
+            {user.role === "admin"
+              ? "Sua foto e nome aparecem na tela de seleção de perfil."
+              : "Você pode trocar sua foto. Para alterar nome ou senha, peça ao administrador."}
+          </p>
         </div>
       </div>
 
-      {editing && (
+      {editing && user.role === "admin" && (
         <EditProfileDialog
           initialName={user.name}
           path="/me"

@@ -363,7 +363,10 @@ async def _apply_user_update(user_id: str, payload: UserUpdate, role_filter: Opt
 
 @api_router.patch("/me")
 async def update_me(payload: UserUpdate, user: dict = Depends(get_current_user)):
-    """Authenticated user updates their own name and/or password."""
+    """Only admin can change own name/password via this endpoint.
+    Alunos must ask the admin to change their name or password."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas o administrador pode alterar nome e senha. Fale com o administrador.")
     return await _apply_user_update(user["id"], payload)
 
 
