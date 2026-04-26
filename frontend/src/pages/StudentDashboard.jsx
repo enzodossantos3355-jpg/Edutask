@@ -75,6 +75,38 @@ export default function StudentDashboard() {
           <p className="text-neutral-600 mt-1">Marque suas tarefas conforme as conclui.</p>
         </div>
 
+        {/* Announcements */}
+        {announcements.length > 0 && (
+          <div className="mb-10" data-testid="student-announcements">
+            <h2 className="font-heading font-bold text-2xl mb-4 flex items-center gap-2">
+              <Megaphone className="w-6 h-6" strokeWidth={2.5} />
+              Avisos
+              <span className="nb-badge bg-violet-200 ml-1">{announcements.length}</span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {announcements.map((a, i) => (
+                <div
+                  key={a.id}
+                  className="nb-card p-5 bg-violet-100 nb-fade-in"
+                  style={{ animationDelay: `${i * 50}ms` }}
+                  data-testid={`student-announcement-${a.id}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 nb-card flex items-center justify-center bg-violet-300 flex-shrink-0">
+                      <Megaphone className="w-5 h-5" strokeWidth={2.5} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-heading font-bold text-lg leading-tight mb-1">{a.title}</h3>
+                      <p className="text-sm text-neutral-800 whitespace-pre-wrap mb-2">{a.message}</p>
+                      <span className="text-xs text-neutral-600 font-medium">{formatDateBR(a.created_at)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4 mb-8 max-w-2xl">
           <StatCard label="Total" value={total} bg="bg-sky-200" testId="stat-total" />
