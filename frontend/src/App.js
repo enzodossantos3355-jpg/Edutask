@@ -3,6 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import LoginPage from "@/pages/LoginPage";
 import AdminDashboard from "@/pages/AdminDashboard";
 import StudentDashboard from "@/pages/StudentDashboard";
@@ -44,30 +45,32 @@ function App() {
   return (
     <div className="App font-body">
       <BrowserRouter>
-        <AuthProvider>
-          <Toaster position="top-right" richColors />
-          <Clock />
-          <Routes>
-            <Route path="/" element={<HomeRedirect />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route
-              path="/admin"
-              element={
-                <ProtectedRoute role="admin">
-                  <AdminDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/aluno"
-              element={
-                <ProtectedRoute role="aluno">
-                  <StudentDashboard />
-                </ProtectedRoute>
-              }
-            />
-          </Routes>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <Toaster position="top-right" richColors />
+            <Clock />
+            <Routes>
+              <Route path="/" element={<HomeRedirect />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route
+                path="/admin"
+                element={
+                  <ProtectedRoute role="admin">
+                    <AdminDashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/aluno"
+                element={
+                  <ProtectedRoute role="aluno">
+                    <StudentDashboard />
+                  </ProtectedRoute>
+                }
+              />
+            </Routes>
+          </AuthProvider>
+        </ThemeProvider>
       </BrowserRouter>
     </div>
   );

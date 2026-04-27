@@ -189,6 +189,79 @@ class AnnouncementUpdate(BaseModel):
     assigned_to: Optional[List[str]] = None
 
 
+class CommentCreate(BaseModel):
+    text: str
+
+
+# ---------------------------------------------------------------------------
+# Points / Streak helpers
+# ---------------------------------------------------------------------------
+TIERS = [
+    ("Obsidiana", 2000, "#1a1a1a", "#a78bfa"),
+    ("Rubi",      1200, "#dc2626", "#fecaca"),
+    ("Diamante",   700, "#0891b2", "#a5f3fc"),
+    ("Platina",    350, "#14b8a6", "#ccfbf1"),
+    ("Ouro",       150, "#f59e0b", "#fef3c7"),
+    ("Prata",       50, "#6b7280", "#f3f4f6"),
+    ("Bronze",       0, "#92400e", "#fed7aa"),
+]
+
+
+def get_tier(points: int) -> dict:
+    for name, threshold, color, bg in TIERS:
+        if points >= threshold:
+            # find next tier for progress
+            idx = TIERS.index((name, threshold, color, bg))
+            next_t = TIERS[idx - 1] if idx > 0 else None
+            return {
+                "name": name, "threshold": threshold, "color": color, "bg": bg,
+                "next_name": next_t[0] if next_t else None,
+                "next_threshold": next_t[1] if next_t else None,
+            }
+    return {"name": "Bronze", "threshold": 0, "color": "#92400e", "bg": "#fed7aa", "next_name": "Prata", "next_threshold": 50}
+
+
+def _br_today_iso() -> str:
+    return datetime.now(timezone.utc).astimezone(BR_TZ).date().isoformat()
+
+
+async def _maybe_update_streak(user_id: str) -> dict:
+    """Update streak based on BR date. Returns updated stats dict."""
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "streak_count": 1, "last_active_date": 1, "longest_streak": 1})
+    today = _br_today_iso()
+    last = (user or {}).get("last_active_date")
+    streak = (user or {}).get("streak_count", 0) or 0
+    longest = (user or {}).get("longest_streak", 0) or 0
+    if last == today:
+        pass  # already counted today
+    elif last:
+        try:
+            d_last = datetime.fromisoformat(last).date()
+            d_today = datetime.fromisoformat(today).date()
+            if (d_today - d_last).days == 1:
+                streak += 1
+            else:
+                streak = 1
+        except Exception:
+            streak = 1
+    else:
+        streak = 1
+    longest = max(longest, streak)
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"streak_count": streak, "last_active_date": today, "longest_streak": longest}},
+    )
+    return {"streak_count": streak, "last_active_date": today, "longest_streak": longest}
+
+
+async def _add_points(user_id: str, delta: int) -> int:
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "points": 1})
+    current = (user or {}).get("points", 0) or 0
+    new_total = max(0, current + delta)
+    await db.users.update_one({"id": user_id}, {"$set": {"points": new_total}})
+    return new_total
+
+
 # ---------------------------------------------------------------------------
 # App + router
 # ---------------------------------------------------------------------------
@@ -269,6 +342,7 @@ async def login(payload: LoginRequest, response: Response):
                 "ip": (response.headers.get("X-Forwarded-For") if hasattr(response, "headers") else None),
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
+            await _maybe_update_streak(user["id"])
         except Exception as e:
             logger.warning(f"Failed to record login log: {e}")
     response.set_cookie(
@@ -720,6 +794,130 @@ async def delete_login_log(log_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Stats / Gamification
+# ---------------------------------------------------------------------------
+@api_router.get("/me/stats")
+async def my_stats(user: dict = Depends(get_current_user)):
+    u = await db.users.find_one(
+        {"id": user["id"]},
+        {"_id": 0, "points": 1, "streak_count": 1, "longest_streak": 1, "last_active_date": 1},
+    ) or {}
+    points = u.get("points", 0) or 0
+    return {
+        "points": points,
+        "streak_count": u.get("streak_count", 0) or 0,
+        "longest_streak": u.get("longest_streak", 0) or 0,
+        "last_active_date": u.get("last_active_date"),
+        "tier": get_tier(points),
+    }
+
+
+@api_router.get("/admin/stats")
+async def admin_stats(_: dict = Depends(require_admin)):
+    """Aggregate stats for admin dashboard."""
+    students = await db.users.find(
+        {"role": "aluno"},
+        {"_id": 0, "id": 1, "name": 1, "points": 1, "streak_count": 1, "avatar_path": 1},
+    ).to_list(1000)
+    tasks_total = await db.tasks.count_documents({})
+    completions_total = await db.completions.count_documents({})
+    announcements_total = await db.announcements.count_documents({})
+
+    # Top alunos by points
+    enriched = []
+    for s in students:
+        pts = s.get("points", 0) or 0
+        enriched.append({
+            "id": s["id"], "name": s["name"],
+            "points": pts,
+            "streak_count": s.get("streak_count", 0) or 0,
+            "tier": get_tier(pts),
+            "has_avatar": bool(s.get("avatar_path")),
+        })
+    enriched.sort(key=lambda x: x["points"], reverse=True)
+
+    # Completions per day (last 7 days, BR)
+    now_br = datetime.now(timezone.utc).astimezone(BR_TZ)
+    days = []
+    for i in range(6, -1, -1):
+        d = (now_br.date() - timedelta(days=i)).isoformat()
+        days.append(d)
+    counts = {d: 0 for d in days}
+    completions = await db.completions.find({}, {"_id": 0, "completed_at": 1}).to_list(5000)
+    for c in completions:
+        try:
+            day_utc = datetime.fromisoformat(c["completed_at"].replace("Z", "+00:00"))
+            day_br = day_utc.astimezone(BR_TZ).date().isoformat()
+            if day_br in counts:
+                counts[day_br] += 1
+        except Exception:
+            pass
+
+    # Tasks by subject
+    tasks = await db.tasks.find({}, {"_id": 0, "subject": 1}).to_list(5000)
+    subj_counts: dict = {}
+    for t in tasks:
+        s = t.get("subject", "—")
+        subj_counts[s] = subj_counts.get(s, 0) + 1
+    top_subjects = sorted(subj_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    return {
+        "totals": {
+            "tasks": tasks_total,
+            "completions": completions_total,
+            "announcements": announcements_total,
+            "students": len(students),
+        },
+        "top_students": enriched[:5],
+        "all_students_ranking": enriched,
+        "completions_per_day": [{"date": d, "count": counts[d]} for d in days],
+        "top_subjects": [{"subject": s, "count": c} for s, c in top_subjects],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Announcement comments
+# ---------------------------------------------------------------------------
+@api_router.post("/announcements/{ann_id}/comments")
+async def add_announcement_comment(ann_id: str, payload: CommentCreate, user: dict = Depends(get_current_user)):
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comentário vazio")
+    if not await db.announcements.find_one({"id": ann_id}):
+        raise HTTPException(status_code=404, detail="Aviso não encontrado")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "announcement_id": ann_id,
+        "user_id": user["id"],
+        "user_name": user["name"],
+        "user_role": user["role"],
+        "text": text,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.comments.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/announcements/{ann_id}/comments")
+async def list_announcement_comments(ann_id: str, _: dict = Depends(get_current_user)):
+    items = await db.comments.find({"announcement_id": ann_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return items
+
+
+@api_router.delete("/announcements/{ann_id}/comments/{comment_id}")
+async def delete_comment(ann_id: str, comment_id: str, user: dict = Depends(get_current_user)):
+    """Author or admin can delete a comment."""
+    comment = await db.comments.find_one({"id": comment_id, "announcement_id": ann_id})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comentário não encontrado")
+    if user["role"] != "admin" and comment["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    await db.comments.delete_one({"id": comment_id})
+    return {"ok": True}
+
+
 @api_router.put("/announcements/{ann_id}")
 async def update_announcement(ann_id: str, payload: AnnouncementUpdate, _: dict = Depends(require_admin)):
     update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
@@ -759,23 +957,39 @@ async def delete_task(task_id: str, _: dict = Depends(require_admin)):
 async def complete_task(task_id: str, user: dict = Depends(get_current_user)):
     if user["role"] != "aluno":
         raise HTTPException(status_code=403, detail="Apenas alunos podem marcar tarefas")
-    if not await db.tasks.find_one({"id": task_id}):
+    task = await db.tasks.find_one({"id": task_id})
+    if not task:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
     existing = await db.completions.find_one({"task_id": task_id, "user_id": user["id"]})
     if existing:
-        return {"ok": True, "completed_at": existing["completed_at"]}
+        return {"ok": True, "completed_at": existing["completed_at"], "points_earned": 0}
     completed_at = datetime.now(timezone.utc).isoformat()
     await db.completions.insert_one({
         "task_id": task_id, "user_id": user["id"], "completed_at": completed_at,
     })
-    return {"ok": True, "completed_at": completed_at}
+    # Award points: 10 if on-time, 3 if late
+    today = _br_today_iso()
+    on_time = task.get("due_date", "9999-12-31") >= today
+    earned = 10 if on_time else 3
+    new_total = await _add_points(user["id"], earned)
+    return {"ok": True, "completed_at": completed_at, "points_earned": earned, "total_points": new_total, "on_time": on_time}
 
 
 @api_router.post("/tasks/{task_id}/uncomplete")
 async def uncomplete_task(task_id: str, user: dict = Depends(get_current_user)):
     if user["role"] != "aluno":
         raise HTTPException(status_code=403, detail="Apenas alunos podem desmarcar tarefas")
+    task = await db.tasks.find_one({"id": task_id})
+    completion = await db.completions.find_one({"task_id": task_id, "user_id": user["id"]})
     await db.completions.delete_one({"task_id": task_id, "user_id": user["id"]})
+    if completion and task:
+        # subtract points awarded
+        today = _br_today_iso()
+        completed_at = completion.get("completed_at", "")
+        completed_date = completed_at.split("T")[0] if completed_at else today
+        on_time = task.get("due_date", "9999-12-31") >= completed_date
+        delta = -(10 if on_time else 3)
+        await _add_points(user["id"], delta)
     return {"ok": True}
 
 

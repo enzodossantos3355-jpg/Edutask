@@ -1,12 +1,15 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3 } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
 import MyProfileBanner from "@/components/MyProfileBanner";
 import AvatarUploader from "@/components/AvatarUploader";
 import EditProfileDialog from "@/components/EditProfileDialog";
+import AnnouncementComments from "@/components/AnnouncementComments";
+import Avatar from "@/components/Avatar";
+import { getTier } from "@/lib/tiers";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
 const STATUS_OPTS = [
@@ -61,12 +64,20 @@ export default function AdminDashboard() {
           >
             <History className="w-4 h-4 inline mr-2" /> Acessos
           </button>
+          <button
+            onClick={() => setTab("stats")}
+            className={`nb-btn px-5 py-2.5 ${tab === "stats" ? "bg-violet-400" : "bg-white"}`}
+            data-testid="tab-stats"
+          >
+            <BarChart3 className="w-4 h-4 inline mr-2" /> Estatísticas
+          </button>
         </div>
         {tab === "tasks" && <TasksPanel />}
         {tab === "announcements" && <AnnouncementsPanel />}
         {tab === "students" && <StudentsPanel />}
         {tab === "subjects" && <SubjectsPanel />}
         {tab === "logs" && <LoginLogsPanel />}
+        {tab === "stats" && <StatsPanel />}
       </div>
     </div>
   );
@@ -966,6 +977,7 @@ function AnnouncementsPanel() {
                   )}
                 </div>
               )}
+              <AnnouncementComments announcementId={a.id} />
             </div>
           ))}
         </div>
@@ -1176,6 +1188,130 @@ function LoginLogsPanel() {
           onConfirm={clearAll}
         />
       )}
+    </div>
+  );
+}
+
+
+// --- Stats panel (admin) ---
+function StatsPanel() {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get("/admin/stats")
+      .then(({ data }) => setStats(data))
+      .catch((e) => toast.error(formatApiError(e?.response?.data?.detail)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p className="text-neutral-500">Carregando...</p>;
+  if (!stats) return null;
+
+  const maxDayCount = Math.max(1, ...stats.completions_per_day.map((d) => d.count));
+  const maxSubjCount = Math.max(1, ...(stats.top_subjects || []).map((s) => s.count));
+
+  return (
+    <div className="space-y-8">
+      <div className="mb-2">
+        <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Estatísticas</h1>
+        <p className="text-neutral-600 mt-1">Visão geral do engajamento da turma.</p>
+      </div>
+
+      {/* Total cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatTile label="Tarefas" value={stats.totals.tasks} bg="bg-sky-200" />
+        <StatTile label="Conclusões" value={stats.totals.completions} bg="bg-emerald-200" />
+        <StatTile label="Avisos" value={stats.totals.announcements} bg="bg-violet-200" />
+        <StatTile label="Alunos" value={stats.totals.students} bg="bg-amber-200" />
+      </div>
+
+      {/* Top alunos */}
+      <div>
+        <h2 className="font-heading font-bold text-2xl mb-3">Top alunos</h2>
+        {(stats.top_students || []).length === 0 ? (
+          <p className="text-neutral-600 text-sm">Nenhum aluno cadastrado.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {stats.top_students.map((s, i) => {
+              const tier = getTier(s.points);
+              return (
+                <div key={s.id} className="nb-card p-4 bg-white flex items-center gap-3" data-testid={`top-student-${s.id}`}>
+                  <div className={`font-heading font-black text-2xl w-8 text-center ${i === 0 ? "text-amber-500" : i === 1 ? "text-gray-400" : i === 2 ? "text-orange-700" : "text-neutral-500"}`}>
+                    #{i + 1}
+                  </div>
+                  <Avatar userId={s.id} name={s.name} size={48} hasAvatar={s.has_avatar} bg="bg-sky-200" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-heading font-bold truncate">{s.name}</div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className={`nb-badge ${tier.bg} ${tier.text} text-[10px]`}>{tier.emoji} {tier.name}</span>
+                      <span className="text-xs font-bold">{s.points} pts</span>
+                    </div>
+                  </div>
+                  {s.streak_count > 0 && (
+                    <div className="text-sm font-bold flex items-center gap-1">
+                      🔥 {s.streak_count}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Conclusões últimos 7 dias */}
+      <div>
+        <h2 className="font-heading font-bold text-2xl mb-3">Conclusões nos últimos 7 dias</h2>
+        <div className="nb-card bg-white p-5">
+          <div className="flex items-end gap-2 h-40" data-testid="completions-chart">
+            {stats.completions_per_day.map((d) => {
+              const h = (d.count / maxDayCount) * 100;
+              const day = new Date(d.date + "T12:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit" });
+              return (
+                <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1.5">
+                  <div className="text-xs font-bold">{d.count}</div>
+                  <div
+                    className="w-full nb-card bg-emerald-300"
+                    style={{ height: `${Math.max(h, 4)}%`, minHeight: 4 }}
+                  />
+                  <div className="text-[10px] text-neutral-600 text-center">{day}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Top matérias */}
+      {stats.top_subjects && stats.top_subjects.length > 0 && (
+        <div>
+          <h2 className="font-heading font-bold text-2xl mb-3">Matérias com mais tarefas</h2>
+          <div className="nb-card bg-white p-5 space-y-3">
+            {stats.top_subjects.map((s) => {
+              const w = (s.count / maxSubjCount) * 100;
+              return (
+                <div key={s.subject} className="flex items-center gap-3">
+                  <div className="w-32 font-bold text-sm truncate">{s.subject}</div>
+                  <div className="flex-1 h-7 border-2 border-black rounded-lg overflow-hidden bg-neutral-50">
+                    <div className="h-full bg-amber-300" style={{ width: `${w}%` }} />
+                  </div>
+                  <div className="w-10 text-right text-sm font-bold">{s.count}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatTile({ label, value, bg }) {
+  return (
+    <div className={`nb-card p-4 ${bg}`}>
+      <div className="text-xs font-bold uppercase tracking-wider opacity-70">{label}</div>
+      <div className="font-heading font-black text-3xl sm:text-4xl mt-1">{value}</div>
     </div>
   );
 }

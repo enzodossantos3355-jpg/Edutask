@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter, Megaphone } from "lucide-react";
+import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter, Megaphone, LayoutGrid, CalendarDays } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import MyProfileBanner from "@/components/MyProfileBanner";
+import AnnouncementComments from "@/components/AnnouncementComments";
+import TaskCalendar from "@/components/TaskCalendar";
 import { getPriority, formatDateBR, daysUntil } from "@/lib/priority";
+import { fireConfetti } from "@/lib/celebrate";
 
 const subjectColors = ["bg-sky-200", "bg-amber-200", "bg-red-200", "bg-emerald-200", "bg-violet-200", "bg-rose-200"];
 const colorFor = (s) => subjectColors[(s || "").length % subjectColors.length];
@@ -15,6 +18,7 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("todas");
   const [subjectFilter, setSubjectFilter] = useState("todas");
+  const [view, setView] = useState("cards"); // "cards" | "calendar"
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,8 +62,15 @@ export default function StudentDashboard() {
         await api.post(`/tasks/${task.id}/uncomplete`);
         toast("Tarefa desmarcada");
       } else {
-        await api.post(`/tasks/${task.id}/complete`);
-        toast.success("Tarefa concluída! 🎉");
+        const { data } = await api.post(`/tasks/${task.id}/complete`);
+        const earned = data?.points_earned || 0;
+        const onTime = data?.on_time;
+        toast.success(
+          earned > 0
+            ? `+${earned} pontos! ${onTime ? "🎯 No prazo!" : "Entregue com atraso"}`
+            : "Tarefa concluída! 🎉"
+        );
+        fireConfetti();
       }
       load();
     } catch (e) {
@@ -101,6 +112,7 @@ export default function StudentDashboard() {
                       <h3 className="font-heading font-bold text-lg leading-tight mb-1">{a.title}</h3>
                       <p className="text-sm text-neutral-800 whitespace-pre-wrap mb-2">{a.message}</p>
                       <span className="text-xs text-neutral-600 font-medium">{formatDateBR(a.created_at)}</span>
+                      <AnnouncementComments announcementId={a.id} />
                     </div>
                   </div>
                 </div>
@@ -143,10 +155,28 @@ export default function StudentDashboard() {
               ))}
             </select>
           )}
+          <div className="ml-auto flex gap-2">
+            <button
+              onClick={() => setView("cards")}
+              className={`nb-btn px-3 py-2 text-sm flex items-center gap-1.5 ${view === "cards" ? "bg-sky-400" : "bg-white"}`}
+              data-testid="view-cards"
+            >
+              <LayoutGrid className="w-4 h-4" /> Cartões
+            </button>
+            <button
+              onClick={() => setView("calendar")}
+              className={`nb-btn px-3 py-2 text-sm flex items-center gap-1.5 ${view === "calendar" ? "bg-amber-300" : "bg-white"}`}
+              data-testid="view-calendar"
+            >
+              <CalendarDays className="w-4 h-4" /> Calendário
+            </button>
+          </div>
         </div>
 
         {loading ? (
           <p className="text-neutral-500">Carregando...</p>
+        ) : view === "calendar" ? (
+          <TaskCalendar tasks={filtered} />
         ) : filtered.length === 0 ? (
           <div className="nb-card bg-white p-12 text-center max-w-xl mx-auto">
             <div className="w-14 h-14 nb-card bg-amber-100 mx-auto mb-4 flex items-center justify-center">
