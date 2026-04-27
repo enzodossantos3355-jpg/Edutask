@@ -45,10 +45,10 @@ export default function EditProfileDialog({
   const title = label ? `Editar ${label}` : "Editar meu perfil";
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" data-testid="edit-profile-dialog">
-      <div className="nb-card bg-white w-full max-w-md p-7">
+    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-3 sm:p-4" data-testid="edit-profile-dialog">
+      <div className="nb-card bg-white w-full max-w-md p-5 sm:p-7">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-heading font-black text-2xl">{title}</h3>
+          <h3 className="font-heading font-black text-xl sm:text-2xl">{title}</h3>
           <button onClick={onClose} className="nb-btn bg-white px-2 py-2"><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={submit} className="space-y-4">

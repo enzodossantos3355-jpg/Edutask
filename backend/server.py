@@ -207,6 +207,20 @@ class MonthlyPrize(BaseModel):
     emoji: Optional[str] = "🏆"
 
 
+class AppFeature(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    emoji: Optional[str] = "✨"
+    status: Optional[str] = "stable"  # "stable" | "beta" | "novo"
+
+
+class AppInfoUpdate(BaseModel):
+    version: Optional[str] = None
+    codename: Optional[str] = None
+    release_notes: Optional[str] = None
+    features: Optional[List[AppFeature]] = None
+
+
 # ---------------------------------------------------------------------------
 # Points / Streak helpers
 # ---------------------------------------------------------------------------
@@ -1037,6 +1051,76 @@ async def delete_monthly_prize(_: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# App Info / Firmware
+# ---------------------------------------------------------------------------
+DEFAULT_APP_INFO = {
+    "id": "app_info",
+    "version": "1.0.0",
+    "codename": "Neo-Brutalist Beta",
+    "release_notes": "Lançamento inicial do Edutask com controle de perfis, gamificação e painel admin.",
+    "features": [
+        {"name": "Seleção de perfis estilo Netflix", "description": "Login com clique no perfil + senha.", "emoji": "🎭", "status": "stable"},
+        {"name": "Tarefas com destinatários", "description": "Crie tarefas e defina quais alunos devem recebê-las.", "emoji": "📚", "status": "stable"},
+        {"name": "Avisos com comentários", "description": "Comunique-se com a turma em tempo real.", "emoji": "📣", "status": "stable"},
+        {"name": "Gamificação (7 patentes)", "description": "De Bronze a Obsidiana com pontos e streaks.", "emoji": "🏆", "status": "stable"},
+        {"name": "Prêmio mensal", "description": "Configure um prêmio para o melhor aluno do mês.", "emoji": "🎁", "status": "stable"},
+        {"name": "Dar / tirar pontos", "description": "Admin pode ajustar pontos manualmente.", "emoji": "➕", "status": "stable"},
+        {"name": "Modo escuro", "description": "Alterne entre claro e escuro no header.", "emoji": "🌙", "status": "stable"},
+        {"name": "Calendário de tarefas", "description": "Visualize tarefas por mês.", "emoji": "📅", "status": "stable"},
+        {"name": "Histórico de acessos", "description": "Veja quem entrou e quando (limpeza em 7 dias).", "emoji": "🕒", "status": "stable"},
+    ],
+}
+
+
+@api_router.get("/app-info")
+async def get_app_info(_: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"id": "app_info"}, {"_id": 0})
+    if not doc:
+        return DEFAULT_APP_INFO
+    return {
+        "id": "app_info",
+        "version": doc.get("version", DEFAULT_APP_INFO["version"]),
+        "codename": doc.get("codename", DEFAULT_APP_INFO["codename"]),
+        "release_notes": doc.get("release_notes", DEFAULT_APP_INFO["release_notes"]),
+        "features": doc.get("features", DEFAULT_APP_INFO["features"]),
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+@api_router.put("/app-info")
+async def set_app_info(payload: AppInfoUpdate, _: dict = Depends(require_admin)):
+    update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if "version" in update:
+        update["version"] = update["version"].strip()
+        if not update["version"]:
+            raise HTTPException(status_code=400, detail="Versão obrigatória")
+    if "codename" in update:
+        update["codename"] = update["codename"].strip()
+    if "release_notes" in update:
+        update["release_notes"] = update["release_notes"].strip()
+    if "features" in update:
+        # normalize list of dicts
+        features = []
+        for f in update["features"]:
+            if isinstance(f, dict):
+                features.append({
+                    "name": (f.get("name") or "").strip(),
+                    "description": (f.get("description") or "").strip(),
+                    "emoji": (f.get("emoji") or "✨").strip() or "✨",
+                    "status": (f.get("status") or "stable").strip() or "stable",
+                })
+        update["features"] = [f for f in features if f["name"]]
+    update["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.settings.update_one(
+        {"id": "app_info"},
+        {"$set": {"id": "app_info", **update}},
+        upsert=True,
+    )
+    doc = await db.settings.find_one({"id": "app_info"}, {"_id": 0})
+    return doc
+
+
 @api_router.put("/announcements/{ann_id}")
 async def update_announcement(ann_id: str, payload: AnnouncementUpdate, _: dict = Depends(require_admin)):
     update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
@@ -1160,6 +1244,14 @@ async def on_startup():
         logger.info("Admin password updated")
 
     init_storage()
+
+    # Seed app info if missing
+    if not await db.settings.find_one({"id": "app_info"}):
+        await db.settings.insert_one({
+            **DEFAULT_APP_INFO,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info("App info seeded")
 
     # Start periodic cleanup loop
     asyncio.create_task(_cleanup_loop())

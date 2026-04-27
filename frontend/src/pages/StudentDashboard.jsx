@@ -82,11 +82,11 @@ export default function StudentDashboard() {
   return (
     <div className="min-h-screen bg-[#FAFAFA]">
       <AppHeader title="Minhas tarefas" />
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-8 pb-24 sm:pb-8">
         <MyProfileBanner bg="bg-sky-100" />
         <PrizeBanner />
-        <div className="mb-8">
-          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Olá! Vamos estudar?</h1>
+        <div className="mb-6 sm:mb-8">
+          <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Olá! Vamos estudar?</h1>
           <p className="text-neutral-600 mt-1">Marque suas tarefas conforme as conclui.</p>
         </div>
 
@@ -131,7 +131,7 @@ export default function StudentDashboard() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap gap-3 mb-6 items-center">
+        <div className="flex flex-wrap gap-2 sm:gap-3 mb-6 items-center">
           <div className="flex items-center gap-1.5 text-sm font-bold mr-1">
             <Filter className="w-4 h-4" /> Filtrar:
           </div>
@@ -139,7 +139,7 @@ export default function StudentDashboard() {
             <button
               key={k}
               onClick={() => setFilter(k)}
-              className={`nb-btn px-4 py-2 text-sm ${filter === k ? "bg-sky-400" : "bg-white"}`}
+              className={`nb-btn px-3 sm:px-4 py-2 text-sm ${filter === k ? "bg-sky-400" : "bg-white"}`}
               data-testid={`filter-${k}`}
             >
               {label}
@@ -157,7 +157,7 @@ export default function StudentDashboard() {
               ))}
             </select>
           )}
-          <div className="ml-auto flex gap-2">
+          <div className="w-full sm:w-auto sm:ml-auto flex gap-2">
             <button
               onClick={() => setView("cards")}
               className={`nb-btn px-3 py-2 text-sm flex items-center gap-1.5 ${view === "cards" ? "bg-sky-400" : "bg-white"}`}

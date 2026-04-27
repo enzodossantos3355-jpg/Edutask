@@ -111,19 +111,19 @@ export default function LoginPage() {
       </div>
 
       {/* Right side */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-10">
+      <div className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-10">
         <div className="w-full max-w-2xl">
           <div className="flex items-center gap-3 mb-6 lg:hidden">
             <Logo size={40} />
             <span className="font-heading font-black text-2xl tracking-tight">
-              <span className="text-black">Edu</span><span className="text-sky-500">task</span>
+              <span className="text-black dark:text-white">Edu</span><span className="text-sky-500">task</span>
             </span>
           </div>
 
           {!selected ? (
             <div className="nb-fade-in">
-              <h2 className="font-heading font-black text-4xl mb-2">Quem está usando?</h2>
-              <p className="text-neutral-600 mb-8">Escolha seu perfil para continuar.</p>
+              <h2 className="font-heading font-black text-3xl sm:text-4xl mb-2">Quem está usando?</h2>
+              <p className="text-neutral-600 mb-6 sm:mb-8">Escolha seu perfil para continuar.</p>
 
               {loading ? (
                 <p className="text-neutral-500">Carregando perfis...</p>
@@ -186,7 +186,7 @@ export default function LoginPage() {
               )}
             </div>
           ) : (
-            <div className="max-w-md mx-auto nb-card p-8 sm:p-10 bg-white nb-fade-in" data-testid="password-step">
+            <div className="max-w-md mx-auto nb-card p-6 sm:p-8 lg:p-10 bg-white nb-fade-in" data-testid="password-step">
               <button
                 onClick={() => { setSelected(null); setPassword(""); }}
                 className="nb-btn bg-white px-3 py-1.5 text-sm flex items-center gap-1 mb-6"

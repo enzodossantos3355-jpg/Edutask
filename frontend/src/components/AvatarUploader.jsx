@@ -81,7 +81,7 @@ export default function AvatarUploader({
           data-testid="avatar-file-input"
         />
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="hidden sm:flex flex-col gap-2">
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}

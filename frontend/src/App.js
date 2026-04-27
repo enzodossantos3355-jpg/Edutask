@@ -32,6 +32,12 @@ function HomeRedirect() {
   return <Navigate to={user.role === "admin" ? "/admin" : "/aluno"} replace />;
 }
 
+function AuthedClock() {
+  const { user } = useAuth();
+  if (!user) return null;
+  return <Clock />;
+}
+
 function App() {
   // Load Google Fonts: Outfit + DM Sans
   useEffect(() => {
@@ -48,7 +54,7 @@ function App() {
         <ThemeProvider>
           <AuthProvider>
             <Toaster position="top-right" richColors />
-            <Clock />
+            <AuthedClock />
             <Routes>
               <Route path="/" element={<HomeRedirect />} />
               <Route path="/login" element={<LoginPage />} />

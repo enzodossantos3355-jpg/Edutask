@@ -29,9 +29,9 @@ export default function MyProfileBanner({ bg = "bg-amber-200" }) {
   const tier = stats ? getTier(stats.points || 0) : null;
 
   return (
-    <div className={`nb-card p-5 mb-8 ${bg}`} data-testid="my-profile-banner">
-      <div className="flex items-start justify-between flex-wrap gap-5">
-        <div className="flex items-center gap-4">
+    <div className={`nb-card p-4 sm:p-5 mb-6 sm:mb-8 ${bg}`} data-testid="my-profile-banner">
+      <div className="flex items-start justify-between flex-wrap gap-4 sm:gap-5">
+        <div className="flex items-center gap-3 sm:gap-4">
           <AvatarUploader
             userId={user.id}
             name={user.name}
@@ -41,14 +41,14 @@ export default function MyProfileBanner({ bg = "bg-amber-200" }) {
               refresh();
             }}
             path="/me/avatar"
-            size={72}
+            size={64}
             bg={user.role === "admin" ? "bg-red-300" : "bg-sky-300"}
             tierBorderColor={isAluno && tier ? tier.borderHex : null}
           />
-          <div>
-            <p className="font-heading font-bold text-lg leading-tight flex items-center gap-2">
-              {user.name}
-              {tier && isAluno && <span className="text-xl" title={tier.name}>{tier.emoji}</span>}
+          <div className="min-w-0">
+            <p className="font-heading font-bold text-base sm:text-lg leading-tight flex items-center gap-2">
+              <span className="truncate">{user.name}</span>
+              {tier && isAluno && <span className="text-xl flex-shrink-0" title={tier.name}>{tier.emoji}</span>}
             </p>
             <p className="text-xs text-neutral-700">{user.role === "admin" ? "Administrador" : "Aluno"}</p>
             {tier && isAluno && stats?.rank && (
@@ -69,12 +69,12 @@ export default function MyProfileBanner({ bg = "bg-amber-200" }) {
           </div>
         </div>
         {isAluno && stats && (
-          <div className="flex-1 min-w-[280px] max-w-2xl">
+          <div className="flex-1 min-w-full sm:min-w-[280px] max-w-2xl">
             <StatsCard stats={stats} />
           </div>
         )}
         {!isAluno && (
-          <div className="text-sm text-neutral-700 max-w-sm">
+          <div className="text-sm text-neutral-700 max-w-sm hidden sm:block">
             <p className="font-bold mb-1">Personalize seu perfil</p>
             <p>Sua foto e nome aparecem na tela de seleção de perfil.</p>
           </div>

@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { Clock as ClockIcon } from "lucide-react";
 
 /**
- * Floating clock fixed to the bottom-right corner.
- * Shows current time and date in pt-BR (BRT timezone of the user device).
+ * Floating clock. On mobile anchors to bottom-right (compact),
+ * on sm+ screens anchors to top-right below header.
  */
 export default function Clock() {
   const [now, setNow] = useState(() => new Date());
@@ -20,13 +20,13 @@ export default function Clock() {
 
   return (
     <div
-      className="fixed top-20 right-4 z-40 nb-card bg-white px-3 py-2 flex items-center gap-2 select-none"
+      className="fixed bottom-3 right-3 sm:top-20 sm:right-4 sm:bottom-auto z-40 nb-card bg-white px-2.5 py-1.5 sm:px-3 sm:py-2 flex items-center gap-2 select-none"
       data-testid="floating-clock"
     >
-      <ClockIcon className="w-4 h-4" strokeWidth={2.5} />
+      <ClockIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" strokeWidth={2.5} />
       <div className="leading-tight">
-        <div className="font-mono font-bold text-base tabular-nums">{hh}:{mm}:{ss}</div>
-        <div className="text-[10px] text-neutral-600 uppercase tracking-wider">{date}</div>
+        <div className="font-mono font-bold text-sm sm:text-base tabular-nums">{hh}:{mm}<span className="hidden sm:inline">:{ss}</span></div>
+        <div className="text-[9px] sm:text-[10px] text-neutral-600 uppercase tracking-wider">{date}</div>
       </div>
     </div>
   );

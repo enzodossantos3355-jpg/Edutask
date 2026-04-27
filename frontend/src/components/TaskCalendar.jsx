@@ -39,9 +39,9 @@ export default function TaskCalendar({ tasks }) {
   }
 
   return (
-    <div className="nb-card bg-white p-4 sm:p-6" data-testid="task-calendar">
+    <div className="nb-card bg-white p-3 sm:p-6" data-testid="task-calendar">
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-        <h2 className="font-heading font-black text-2xl">{MONTHS[month]} {year}</h2>
+        <h2 className="font-heading font-black text-xl sm:text-2xl">{MONTHS[month]} {year}</h2>
         <div className="flex items-center gap-2">
           <button onClick={goPrev} className="nb-btn bg-white px-3 py-2" data-testid="cal-prev"><ChevronLeft className="w-4 h-4" /></button>
           <button onClick={goToday} className="nb-btn bg-amber-200 px-3 py-2 text-sm" data-testid="cal-today">Hoje</button>
@@ -49,9 +49,9 @@ export default function TaskCalendar({ tasks }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-1.5">
+      <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
         {WEEKDAYS.map((d) => (
-          <div key={d} className="text-center text-xs font-bold uppercase tracking-wider text-neutral-600 py-2">{d}</div>
+          <div key={d} className="text-center text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-600 py-1.5 sm:py-2">{d}</div>
         ))}
         {cells.map((c, i) => {
           if (!c) return <div key={`e-${i}`} />;
@@ -59,17 +59,17 @@ export default function TaskCalendar({ tasks }) {
           return (
             <div
               key={c.iso}
-              className={`nb-card min-h-[88px] p-1.5 ${isToday ? "bg-amber-100" : "bg-white"}`}
+              className={`nb-card min-h-[60px] sm:min-h-[88px] p-1 sm:p-1.5 ${isToday ? "bg-amber-100" : "bg-white"}`}
               data-testid={`cal-day-${c.iso}`}
             >
-              <div className={`text-xs font-bold ${isToday ? "text-amber-900" : ""}`}>{c.day}</div>
-              <div className="space-y-0.5 mt-1">
-                {c.tasks.slice(0, 3).map((t) => {
+              <div className={`text-[10px] sm:text-xs font-bold ${isToday ? "text-amber-900" : ""}`}>{c.day}</div>
+              <div className="space-y-0.5 mt-0.5 sm:mt-1">
+                {c.tasks.slice(0, 2).map((t) => {
                   const p = getPriority(t.due_date, t.completed);
                   return (
                     <div
                       key={t.id}
-                      className={`text-[10px] font-bold px-1 py-0.5 rounded border border-black truncate ${t.completed ? "line-through opacity-60" : ""} ${colorFor(t.subject)}`}
+                      className={`text-[9px] sm:text-[10px] font-bold px-1 py-0.5 rounded border border-black truncate ${t.completed ? "line-through opacity-60" : ""} ${colorFor(t.subject)}`}
                       title={`${t.subject}: ${t.title} (${p.label})`}
                       data-testid={`cal-task-${t.id}`}
                     >
@@ -77,8 +77,8 @@ export default function TaskCalendar({ tasks }) {
                     </div>
                   );
                 })}
-                {c.tasks.length > 3 && (
-                  <div className="text-[10px] text-neutral-600 font-bold">+{c.tasks.length - 3}</div>
+                {c.tasks.length > 2 && (
+                  <div className="text-[9px] sm:text-[10px] text-neutral-600 font-bold">+{c.tasks.length - 2}</div>
                 )}
               </div>
             </div>

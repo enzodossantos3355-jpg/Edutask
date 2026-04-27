@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3, Trophy, Minus } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3, Trophy, Minus, Cpu } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
@@ -9,6 +9,7 @@ import AvatarUploader from "@/components/AvatarUploader";
 import EditProfileDialog from "@/components/EditProfileDialog";
 import AnnouncementComments from "@/components/AnnouncementComments";
 import Avatar from "@/components/Avatar";
+import FirmwarePanel from "@/components/FirmwarePanel";
 import { getTier } from "@/lib/tiers";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
@@ -26,50 +27,57 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-[#FAFAFA]">
       <AppHeader title="Painel do Administrador" />
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-8 pb-24 sm:pb-8">
         <MyProfileBanner />
-        <div className="flex flex-wrap gap-3 mb-8">
+        <div className="flex flex-wrap gap-2 sm:gap-3 mb-6 sm:mb-8">
           <button
             onClick={() => setTab("tasks")}
-            className={`nb-btn px-5 py-2.5 ${tab === "tasks" ? "bg-sky-400" : "bg-white"}`}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "tasks" ? "bg-sky-400" : "bg-white"}`}
             data-testid="tab-tasks"
           >
-            <ListTodo className="w-4 h-4 inline mr-2" /> Tarefas
+            <ListTodo className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Tarefas
           </button>
           <button
             onClick={() => setTab("announcements")}
-            className={`nb-btn px-5 py-2.5 ${tab === "announcements" ? "bg-violet-300" : "bg-white"}`}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "announcements" ? "bg-violet-300" : "bg-white"}`}
             data-testid="tab-announcements"
           >
-            <Megaphone className="w-4 h-4 inline mr-2" /> Avisos
+            <Megaphone className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Avisos
           </button>
           <button
             onClick={() => setTab("students")}
-            className={`nb-btn px-5 py-2.5 ${tab === "students" ? "bg-amber-300" : "bg-white"}`}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "students" ? "bg-amber-300" : "bg-white"}`}
             data-testid="tab-students"
           >
-            <Users className="w-4 h-4 inline mr-2" /> Alunos
+            <Users className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Alunos
           </button>
           <button
             onClick={() => setTab("subjects")}
-            className={`nb-btn px-5 py-2.5 ${tab === "subjects" ? "bg-red-300" : "bg-white"}`}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "subjects" ? "bg-red-300" : "bg-white"}`}
             data-testid="tab-subjects"
           >
-            <BookMarked className="w-4 h-4 inline mr-2" /> Matérias
+            <BookMarked className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Matérias
           </button>
           <button
             onClick={() => setTab("logs")}
-            className={`nb-btn px-5 py-2.5 ${tab === "logs" ? "bg-emerald-300" : "bg-white"}`}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "logs" ? "bg-emerald-300" : "bg-white"}`}
             data-testid="tab-logs"
           >
-            <History className="w-4 h-4 inline mr-2" /> Acessos
+            <History className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Acessos
           </button>
           <button
             onClick={() => setTab("stats")}
-            className={`nb-btn px-5 py-2.5 ${tab === "stats" ? "bg-violet-400" : "bg-white"}`}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "stats" ? "bg-violet-400" : "bg-white"}`}
             data-testid="tab-stats"
           >
-            <BarChart3 className="w-4 h-4 inline mr-2" /> Estatísticas
+            <BarChart3 className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Estatísticas
+          </button>
+          <button
+            onClick={() => setTab("firmware")}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "firmware" ? "bg-sky-300" : "bg-white"}`}
+            data-testid="tab-firmware"
+          >
+            <Cpu className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Firmware
           </button>
         </div>
         {tab === "tasks" && <TasksPanel />}
@@ -78,6 +86,7 @@ export default function AdminDashboard() {
         {tab === "subjects" && <SubjectsPanel />}
         {tab === "logs" && <LoginLogsPanel />}
         {tab === "stats" && <StatsPanel />}
+        {tab === "firmware" && <FirmwarePanel />}
       </div>
     </div>
   );
@@ -151,7 +160,7 @@ function TasksPanel() {
     <div>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
         <div>
-          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Tarefas</h1>
+          <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Tarefas</h1>
           <p className="text-neutral-600 mt-1">Crie tarefas e acompanhe o progresso dos alunos.</p>
         </div>
         <button
@@ -375,10 +384,10 @@ function TaskDialog({ task, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4 nb-fade-in" data-testid="task-dialog">
-      <div className="nb-card bg-white w-full max-w-2xl max-h-[90vh] overflow-auto p-7">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3 sm:p-4 nb-fade-in" data-testid="task-dialog">
+      <div className="nb-card bg-white w-full max-w-2xl max-h-[92vh] overflow-auto p-5 sm:p-7">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-heading font-black text-2xl">{isEdit ? "Editar tarefa" : "Nova tarefa"}</h3>
+          <h3 className="font-heading font-black text-xl sm:text-2xl">{isEdit ? "Editar tarefa" : "Nova tarefa"}</h3>
           <button onClick={onClose} className="nb-btn bg-white px-2 py-2" data-testid="close-task-dialog">
             <X className="w-4 h-4" />
           </button>
@@ -516,7 +525,7 @@ function StudentsPanel() {
     <div>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
         <div>
-          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Alunos</h1>
+          <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Alunos</h1>
           <p className="text-neutral-600 mt-1">Gerencie as contas dos seus alunos e veja as senhas.</p>
         </div>
         <button
@@ -697,10 +706,10 @@ function CreateStudentDialog({ onClose, onCreated }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="create-student-dialog">
-      <div className="nb-card bg-white w-full max-w-md p-7">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3 sm:p-4" data-testid="create-student-dialog">
+      <div className="nb-card bg-white w-full max-w-md p-5 sm:p-7">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-heading font-black text-2xl">Novo aluno</h3>
+          <h3 className="font-heading font-black text-xl sm:text-2xl">Novo aluno</h3>
           <button onClick={onClose} className="nb-btn bg-white px-2 py-2"><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -793,7 +802,7 @@ function SubjectsPanel() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Matérias</h1>
+        <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Matérias</h1>
         <p className="text-neutral-600 mt-1">As matérias aparecem como opções ao criar uma tarefa.</p>
       </div>
 
@@ -934,7 +943,7 @@ function AnnouncementsPanel() {
     <div>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
         <div>
-          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Avisos</h1>
+          <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Avisos</h1>
           <p className="text-neutral-600 mt-1">Comunique-se com seus alunos. Avisos aparecem no dashboard deles.</p>
         </div>
         <button
@@ -1071,10 +1080,10 @@ function AnnouncementDialog({ announcement, students, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-testid="announcement-dialog">
-      <div className="nb-card bg-white w-full max-w-xl max-h-[90vh] overflow-auto p-7">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3 sm:p-4" data-testid="announcement-dialog">
+      <div className="nb-card bg-white w-full max-w-xl max-h-[92vh] overflow-auto p-5 sm:p-7">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-heading font-black text-2xl">{isEdit ? "Editar aviso" : "Novo aviso"}</h3>
+          <h3 className="font-heading font-black text-xl sm:text-2xl">{isEdit ? "Editar aviso" : "Novo aviso"}</h3>
           <button onClick={onClose} className="nb-btn bg-white px-2 py-2"><X className="w-4 h-4" /></button>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -1161,7 +1170,7 @@ function LoginLogsPanel() {
     <div>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
         <div>
-          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Acessos</h1>
+          <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Acessos</h1>
           <p className="text-neutral-600 mt-1">Histórico de logins dos alunos. Apagado automaticamente após 7 dias.</p>
         </div>
         {logs.length > 0 && (
@@ -1181,7 +1190,8 @@ function LoginLogsPanel() {
         <EmptyState icon={History} title="Nenhum acesso registrado" subtitle="Quando os alunos fizerem login, aparecerá aqui." />
       ) : (
         <div className="nb-card bg-white overflow-hidden">
-          <table className="w-full" data-testid="logs-table">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[360px]" data-testid="logs-table">
             <thead className="bg-emerald-100 border-b-2 border-black">
               <tr>
                 <th className="text-left p-3 text-sm font-heading font-bold">Aluno</th>
@@ -1207,7 +1217,8 @@ function LoginLogsPanel() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 
@@ -1246,7 +1257,7 @@ function StatsPanel() {
   return (
     <div className="space-y-8">
       <div className="mb-2">
-        <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Estatísticas</h1>
+        <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Estatísticas</h1>
         <p className="text-neutral-600 mt-1">Visão geral do engajamento da turma.</p>
       </div>
 
@@ -1376,10 +1387,10 @@ function AdjustPointsDialog({ student, sign, onClose, onSaved }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" data-testid="adjust-points-dialog">
-      <div className="nb-card bg-white w-full max-w-md p-7">
+    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-3 sm:p-4" data-testid="adjust-points-dialog">
+      <div className="nb-card bg-white w-full max-w-md p-5 sm:p-7">
         <div className="flex items-center justify-between mb-5">
-          <h3 className="font-heading font-black text-2xl">
+          <h3 className="font-heading font-black text-xl sm:text-2xl">
             {isAdd ? "Adicionar pontos" : "Tirar pontos"}
           </h3>
           <button onClick={onClose} className="nb-btn bg-white px-2 py-2"><X className="w-4 h-4" /></button>
