@@ -6,11 +6,13 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import uuid
+import asyncio
 import logging
 import bcrypt
 import jwt
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dtime
+from zoneinfo import ZoneInfo
 from typing import List, Optional
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Form, Query, Header
@@ -31,6 +33,10 @@ db = client[os.environ['DB_NAME']]
 
 JWT_ALGORITHM = "HS256"
 JWT_SECRET = os.environ["JWT_SECRET"]
+
+BR_TZ = ZoneInfo("America/Sao_Paulo")
+LOG_RETENTION_DAYS = 7
+TASK_CUTOFF_TIME = dtime(12, 30)  # 12:30 PM in BR_TZ
 
 # Object storage
 STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
@@ -252,6 +258,19 @@ async def login(payload: LoginRequest, response: Response):
     if status == "blocked":
         raise HTTPException(status_code=403, detail="Perfil bloqueado. Fale com o administrador.")
     token = create_access_token(user["id"], user["email"])
+    # Log access (only for alunos — admin sees their own access via session)
+    if user.get("role") == "aluno":
+        try:
+            await db.login_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "user_id": user["id"],
+                "user_name": user["name"],
+                "role": user["role"],
+                "ip": (response.headers.get("X-Forwarded-For") if hasattr(response, "headers") else None),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as e:
+            logger.warning(f"Failed to record login log: {e}")
     response.set_cookie(
         key="access_token", value=token, httponly=True,
         secure=False, samesite="lax", max_age=60 * 60 * 24 * 7, path="/",
@@ -675,6 +694,32 @@ async def delete_announcement(ann_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Login logs (acessos dos alunos)
+# ---------------------------------------------------------------------------
+@api_router.get("/login-logs")
+async def list_login_logs(_: dict = Depends(require_admin)):
+    """List all login logs (alunos). Auto-deleted after 7 days."""
+    items = await db.login_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return items
+
+
+@api_router.delete("/login-logs")
+async def delete_all_login_logs(_: dict = Depends(require_admin)):
+    """Clear ALL login logs."""
+    result = await db.login_logs.delete_many({})
+    return {"ok": True, "deleted": result.deleted_count}
+
+
+@api_router.delete("/login-logs/{log_id}")
+async def delete_login_log(log_id: str, _: dict = Depends(require_admin)):
+    """Delete a single login log."""
+    result = await db.login_logs.delete_one({"id": log_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Registro não encontrado")
+    return {"ok": True}
+
+
 @api_router.put("/announcements/{ann_id}")
 async def update_announcement(ann_id: str, payload: AnnouncementUpdate, _: dict = Depends(require_admin)):
     update = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
@@ -747,6 +792,8 @@ async def on_startup():
     await db.files.create_index("id", unique=True)
     await db.subjects.create_index("id", unique=True)
     await db.announcements.create_index("id", unique=True)
+    await db.login_logs.create_index("id", unique=True)
+    await db.login_logs.create_index("created_at")
 
     # Seed default subjects (only on empty collection)
     if await db.subjects.count_documents({}) == 0:
@@ -780,6 +827,41 @@ async def on_startup():
         logger.info("Admin password updated")
 
     init_storage()
+
+    # Start periodic cleanup loop
+    asyncio.create_task(_cleanup_loop())
+
+
+async def _run_cleanup():
+    """Delete expired login logs and tasks past their 12:30 PM (BR) cutoff."""
+    now_utc = datetime.now(timezone.utc)
+    # 1. Delete login logs older than retention window
+    cutoff = (now_utc - timedelta(days=LOG_RETENTION_DAYS)).isoformat()
+    log_res = await db.login_logs.delete_many({"created_at": {"$lt": cutoff}})
+    if log_res.deleted_count:
+        logger.info(f"Cleanup: removed {log_res.deleted_count} expired login logs")
+
+    # 2. Delete tasks whose due_date <= today (BR) AND BR-time is past 12:30
+    now_br = now_utc.astimezone(BR_TZ)
+    today_br = now_br.date()
+    if now_br.time() >= TASK_CUTOFF_TIME:
+        # Today's tasks past 12:30 + any overdue tasks
+        task_res = await db.tasks.delete_many({"due_date": {"$lte": today_br.isoformat()}})
+    else:
+        # Only strictly overdue tasks (before today)
+        task_res = await db.tasks.delete_many({"due_date": {"$lt": today_br.isoformat()}})
+    if task_res.deleted_count:
+        logger.info(f"Cleanup: removed {task_res.deleted_count} expired tasks")
+
+
+async def _cleanup_loop():
+    """Run cleanup every 60 seconds."""
+    while True:
+        try:
+            await _run_cleanup()
+        except Exception as e:
+            logger.error(f"Cleanup error: {e}")
+        await asyncio.sleep(60)
 
 
 @app.on_event("shutdown")

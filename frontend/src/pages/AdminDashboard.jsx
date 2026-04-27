@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
@@ -54,11 +54,19 @@ export default function AdminDashboard() {
           >
             <BookMarked className="w-4 h-4 inline mr-2" /> Matérias
           </button>
+          <button
+            onClick={() => setTab("logs")}
+            className={`nb-btn px-5 py-2.5 ${tab === "logs" ? "bg-emerald-300" : "bg-white"}`}
+            data-testid="tab-logs"
+          >
+            <History className="w-4 h-4 inline mr-2" /> Acessos
+          </button>
         </div>
         {tab === "tasks" && <TasksPanel />}
         {tab === "announcements" && <AnnouncementsPanel />}
         {tab === "students" && <StudentsPanel />}
         {tab === "subjects" && <SubjectsPanel />}
+        {tab === "logs" && <LoginLogsPanel />}
       </div>
     </div>
   );
@@ -1054,3 +1062,121 @@ function AnnouncementDialog({ announcement, students, onClose, onSaved }) {
     </div>
   );
 }
+
+// --- Login logs panel ---
+function LoginLogsPanel() {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/login-logs");
+      setLogs(data);
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const clearAll = async () => {
+    try {
+      const { data } = await api.delete("/login-logs");
+      toast.success(`${data.deleted} registro${data.deleted === 1 ? "" : "s"} apagado${data.deleted === 1 ? "" : "s"}`);
+      setConfirmClear(false);
+      load();
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    }
+  };
+
+  const removeOne = async (id) => {
+    try {
+      await api.delete(`/login-logs/${id}`);
+      toast.success("Registro removido");
+      load();
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    }
+  };
+
+  const formatDateTimeBR = (iso) => {
+    try {
+      return new Date(iso).toLocaleString("pt-BR", {
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+      });
+    } catch { return iso; }
+  };
+
+  return (
+    <div>
+      <div className="flex items-end justify-between mb-6 flex-wrap gap-4">
+        <div>
+          <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Acessos</h1>
+          <p className="text-neutral-600 mt-1">Histórico de logins dos alunos. Apagado automaticamente após 7 dias.</p>
+        </div>
+        {logs.length > 0 && (
+          <button
+            onClick={() => setConfirmClear(true)}
+            className="nb-btn bg-red-300 hover:bg-red-400 px-5 py-3 flex items-center gap-2"
+            data-testid="clear-logs-button"
+          >
+            <Trash2 className="w-4 h-4" /> Limpar tudo
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="text-neutral-500">Carregando...</p>
+      ) : logs.length === 0 ? (
+        <EmptyState icon={History} title="Nenhum acesso registrado" subtitle="Quando os alunos fizerem login, aparecerá aqui." />
+      ) : (
+        <div className="nb-card bg-white overflow-hidden">
+          <table className="w-full" data-testid="logs-table">
+            <thead className="bg-emerald-100 border-b-2 border-black">
+              <tr>
+                <th className="text-left p-3 text-sm font-heading font-bold">Aluno</th>
+                <th className="text-left p-3 text-sm font-heading font-bold">Data e horário</th>
+                <th className="text-right p-3 text-sm font-heading font-bold w-20"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((l, i) => (
+                <tr key={l.id} className={`${i % 2 === 0 ? "bg-white" : "bg-neutral-50"} border-b border-neutral-200`} data-testid={`log-${l.id}`}>
+                  <td className="p-3 font-medium">{l.user_name}</td>
+                  <td className="p-3 font-mono text-sm">{formatDateTimeBR(l.created_at)}</td>
+                  <td className="p-3 text-right">
+                    <button
+                      onClick={() => removeOne(l.id)}
+                      className="nb-btn bg-red-200 hover:bg-red-300 px-2 py-1.5"
+                      data-testid={`delete-log-${l.id}`}
+                      aria-label="Remover registro"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {confirmClear && (
+        <ConfirmDialog
+          title="Limpar todos os registros?"
+          message={`Isso apagará ${logs.length} registro${logs.length === 1 ? "" : "s"} de acesso. Esta ação não pode ser desfeita.`}
+          confirmLabel="Limpar tudo"
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={clearAll}
+        />
+      )}
+    </div>
+  );
+}
+
