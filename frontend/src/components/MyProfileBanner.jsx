@@ -32,26 +32,30 @@ export default function MyProfileBanner({ bg = "bg-amber-200" }) {
     <div className={`nb-card p-5 mb-8 ${bg}`} data-testid="my-profile-banner">
       <div className="flex items-start justify-between flex-wrap gap-5">
         <div className="flex items-center gap-4">
-          <div className={tier ? `rounded-full ring-4 ring-offset-2 ${tier.ring} ring-offset-transparent inline-block` : "inline-block"}>
-            <AvatarUploader
-              userId={user.id}
-              name={user.name}
-              hasAvatar={hasAvatar}
-              onChanged={(present) => {
-                setHasAvatar(present);
-                refresh();
-              }}
-              path="/me/avatar"
-              size={72}
-              bg={user.role === "admin" ? "bg-red-300" : "bg-sky-300"}
-            />
-          </div>
+          <AvatarUploader
+            userId={user.id}
+            name={user.name}
+            hasAvatar={hasAvatar}
+            onChanged={(present) => {
+              setHasAvatar(present);
+              refresh();
+            }}
+            path="/me/avatar"
+            size={72}
+            bg={user.role === "admin" ? "bg-red-300" : "bg-sky-300"}
+            tierBorderColor={isAluno && tier ? tier.borderHex : null}
+          />
           <div>
             <p className="font-heading font-bold text-lg leading-tight flex items-center gap-2">
               {user.name}
-              {tier && <span className="text-xl" title={tier.name}>{tier.emoji}</span>}
+              {tier && isAluno && <span className="text-xl" title={tier.name}>{tier.emoji}</span>}
             </p>
             <p className="text-xs text-neutral-700">{user.role === "admin" ? "Administrador" : "Aluno"}</p>
+            {tier && isAluno && stats?.rank && (
+              <p className="text-xs font-bold mt-1" data-testid="my-rank" style={{ color: tier.borderHex }}>
+                Sua posição: <span className="font-heading font-black text-sm">#{stats.rank}</span> de {stats.total_students}
+              </p>
+            )}
             {user.role === "admin" && (
               <button
                 onClick={() => setEditing(true)}

@@ -6,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import Logo from "@/components/Logo";
 import Avatar from "@/components/Avatar";
+import { getTierByName } from "@/lib/tiers";
 
 const STATUS_META = {
   active: { label: null, icon: null, bg: null, dim: false },
@@ -136,6 +137,7 @@ export default function LoginPage() {
                   {profiles.map((p, i) => {
                     const meta = STATUS_META[p.status] || STATUS_META.active;
                     const StatusIcon = meta.icon;
+                    const tier = p.tier_name ? getTierByName(p.tier_name) : null;
                     return (
                       <button
                         key={p.id}
@@ -148,13 +150,19 @@ export default function LoginPage() {
                           <Avatar
                             userId={p.id}
                             name={p.name}
-                            size={80}
+                            size={72}
                             hasAvatar={p.has_avatar}
                             bg={p.role === "admin" ? "bg-red-300" : "bg-sky-300"}
                             className={meta.dim ? "grayscale" : ""}
+                            tierBorderColor={tier && p.role === "aluno" ? tier.borderHex : null}
                           />
                         </div>
                         <div className="font-heading font-bold text-base leading-tight truncate">{p.name}</div>
+                        {tier && p.role === "aluno" && !meta.label && (
+                          <div className="text-[10px] font-bold mt-0.5" style={{ color: tier.borderHex }}>
+                            {tier.emoji} {tier.name}
+                          </div>
+                        )}
                         {meta.label ? (
                           <span className={`nb-badge mt-2 inline-flex items-center gap-1 ${meta.bg}`} data-testid={`profile-status-${p.id}`}>
                             {StatusIcon && <StatusIcon className="w-3 h-3" strokeWidth={2.5} />}

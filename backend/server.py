@@ -124,6 +124,8 @@ class ProfileOut(BaseModel):
     role: str
     status: str = "active"
     has_avatar: bool = False
+    tier_name: Optional[str] = None
+    points: int = 0
 
 
 class UserCreate(BaseModel):
@@ -305,13 +307,45 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 # ---------------------------------------------------------------------------
 @api_router.get("/auth/profiles", response_model=List[ProfileOut])
 async def list_profiles():
-    """Public endpoint: lists all profiles (id + name + role + status + has_avatar)."""
-    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "avatar_path": 1}).to_list(1000)
+    """Public endpoint: lists all profiles (id + name + role + status + has_avatar + tier)."""
+    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "avatar_path": 1, "points": 1}).to_list(1000)
     for u in users:
         u.setdefault("status", "active")
         u["has_avatar"] = bool(u.pop("avatar_path", None))
+        pts = u.get("points", 0) or 0
+        u["points"] = pts
+        u["tier_name"] = get_tier(pts)["name"] if u.get("role") == "aluno" else None
     users.sort(key=lambda u: (0 if u["role"] == "admin" else 1, u["name"].lower()))
     return [ProfileOut(**u) for u in users]
+
+
+@api_router.get("/me/stats")
+async def my_stats(user: dict = Depends(get_current_user)):
+    u = await db.users.find_one(
+        {"id": user["id"]},
+        {"_id": 0, "points": 1, "streak_count": 1, "longest_streak": 1, "last_active_date": 1},
+    ) or {}
+    points = u.get("points", 0) or 0
+    rank = None
+    total = 0
+    if user.get("role") == "aluno":
+        students = await db.users.find({"role": "aluno"}, {"_id": 0, "id": 1, "points": 1}).to_list(1000)
+        # sort by points desc, fallback by id stable
+        students.sort(key=lambda s: (-(s.get("points", 0) or 0), s["id"]))
+        total = len(students)
+        for i, s in enumerate(students):
+            if s["id"] == user["id"]:
+                rank = i + 1
+                break
+    return {
+        "points": points,
+        "streak_count": u.get("streak_count", 0) or 0,
+        "longest_streak": u.get("longest_streak", 0) or 0,
+        "last_active_date": u.get("last_active_date"),
+        "tier": get_tier(points),
+        "rank": rank,
+        "total_students": total,
+    }
 
 
 @api_router.post("/auth/login")
@@ -797,22 +831,6 @@ async def delete_login_log(log_id: str, _: dict = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 # Stats / Gamification
 # ---------------------------------------------------------------------------
-@api_router.get("/me/stats")
-async def my_stats(user: dict = Depends(get_current_user)):
-    u = await db.users.find_one(
-        {"id": user["id"]},
-        {"_id": 0, "points": 1, "streak_count": 1, "longest_streak": 1, "last_active_date": 1},
-    ) or {}
-    points = u.get("points", 0) or 0
-    return {
-        "points": points,
-        "streak_count": u.get("streak_count", 0) or 0,
-        "longest_streak": u.get("longest_streak", 0) or 0,
-        "last_active_date": u.get("last_active_date"),
-        "tier": get_tier(points),
-    }
-
-
 @api_router.get("/admin/stats")
 async def admin_stats(_: dict = Depends(require_admin)):
     """Aggregate stats for admin dashboard."""
