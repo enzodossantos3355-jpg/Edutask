@@ -6,6 +6,7 @@ import AppHeader from "@/components/AppHeader";
 import MyProfileBanner from "@/components/MyProfileBanner";
 import AnnouncementComments from "@/components/AnnouncementComments";
 import TaskCalendar from "@/components/TaskCalendar";
+import PrizeBanner from "@/components/PrizeBanner";
 import { getPriority, formatDateBR, daysUntil } from "@/lib/priority";
 import { fireConfetti } from "@/lib/celebrate";
 
@@ -83,6 +84,7 @@ export default function StudentDashboard() {
       <AppHeader title="Minhas tarefas" />
       <div className="max-w-7xl mx-auto px-6 py-8">
         <MyProfileBanner bg="bg-sky-100" />
+        <PrizeBanner />
         <div className="mb-8">
           <h1 className="font-heading font-black text-4xl sm:text-5xl tracking-tight">Olá! Vamos estudar?</h1>
           <p className="text-neutral-600 mt-1">Marque suas tarefas conforme as conclui.</p>

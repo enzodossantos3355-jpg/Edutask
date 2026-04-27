@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3 } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3, Trophy, Minus } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
@@ -474,6 +474,7 @@ function StudentsPanel() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [adjustPoints, setAdjustPoints] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [revealedIds, setRevealedIds] = useState(new Set());
 
@@ -571,6 +572,29 @@ function StudentsPanel() {
                   </div>
                 </div>
                 <h3 className="font-heading font-bold text-lg leading-tight">{s.name}</h3>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="nb-badge bg-amber-200 inline-flex items-center gap-1" data-testid={`student-points-${s.id}`}>
+                    <Trophy className="w-3 h-3" /> {s.points || 0} pts
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setAdjustPoints({ student: s, sign: 1 })}
+                      className="nb-btn bg-emerald-200 hover:bg-emerald-300 px-1.5 py-1 text-xs"
+                      data-testid={`add-points-${s.id}`}
+                      title="Adicionar pontos"
+                    >
+                      <Plus className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={() => setAdjustPoints({ student: s, sign: -1 })}
+                      className="nb-btn bg-red-200 hover:bg-red-300 px-1.5 py-1 text-xs"
+                      data-testid={`remove-points-${s.id}`}
+                      title="Tirar pontos"
+                    >
+                      <Minus className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
 
                 <div className="mt-3">
                   <label className="block text-xs font-bold uppercase tracking-wider text-neutral-600 mb-1">Status</label>
@@ -629,6 +653,14 @@ function StudentsPanel() {
           label={`aluno: ${editing.name}`}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
+      {adjustPoints && (
+        <AdjustPointsDialog
+          student={adjustPoints.student}
+          sign={adjustPoints.sign}
+          onClose={() => setAdjustPoints(null)}
+          onSaved={() => { setAdjustPoints(null); load(); }}
         />
       )}
       {confirmDelete && (
@@ -1218,6 +1250,8 @@ function StatsPanel() {
         <p className="text-neutral-600 mt-1">Visão geral do engajamento da turma.</p>
       </div>
 
+      <PrizeEditor />
+
       {/* Total cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatTile label="Tarefas" value={stats.totals.tasks} bg="bg-sky-200" />
@@ -1312,6 +1346,203 @@ function StatTile({ label, value, bg }) {
     <div className={`nb-card p-4 ${bg}`}>
       <div className="text-xs font-bold uppercase tracking-wider opacity-70">{label}</div>
       <div className="font-heading font-black text-3xl sm:text-4xl mt-1">{value}</div>
+    </div>
+  );
+}
+
+
+function AdjustPointsDialog({ student, sign, onClose, onSaved }) {
+  const [amount, setAmount] = useState(5);
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const isAdd = sign > 0;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (amount <= 0) return;
+    setSubmitting(true);
+    try {
+      const { data } = await api.post(`/users/${student.id}/points`, {
+        delta: isAdd ? amount : -amount,
+        reason: reason.trim(),
+      });
+      toast.success(`${isAdd ? "+" : "-"}${amount} pts → ${data.total_points} pts totais`);
+      onSaved();
+    } catch (err) {
+      toast.error(formatApiError(err?.response?.data?.detail));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" data-testid="adjust-points-dialog">
+      <div className="nb-card bg-white w-full max-w-md p-7">
+        <div className="flex items-center justify-between mb-5">
+          <h3 className="font-heading font-black text-2xl">
+            {isAdd ? "Adicionar pontos" : "Tirar pontos"}
+          </h3>
+          <button onClick={onClose} className="nb-btn bg-white px-2 py-2"><X className="w-4 h-4" /></button>
+        </div>
+        <p className="text-sm text-neutral-600 mb-4">Aluno: <span className="font-bold">{student.name}</span> ({student.points || 0} pts atualmente)</p>
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-bold mb-1.5">Quantidade</label>
+            <input
+              type="number"
+              required
+              min="1"
+              max="1000"
+              value={amount}
+              onChange={(e) => setAmount(Math.max(1, parseInt(e.target.value, 10) || 0))}
+              className="nb-input"
+              data-testid="adjust-amount-input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold mb-1.5">Motivo (opcional)</label>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={isAdd ? "Ex.: ajudou os colegas" : "Ex.: comportamento inadequado"}
+              maxLength={200}
+              className="nb-input"
+              data-testid="adjust-reason-input"
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-1">
+            <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className={`nb-btn px-5 py-2.5 ${isAdd ? "bg-emerald-300" : "bg-red-300"}`}
+              data-testid="submit-adjust-points"
+            >
+              {submitting ? "..." : isAdd ? `+${amount} pts` : `-${amount} pts`}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// --- Prize editor (inside StatsPanel) ---
+function PrizeEditor() {
+  const [data, setData] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [emoji, setEmoji] = useState("🏆");
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get("/monthly-prize");
+      setData(data);
+      if (data.prize) {
+        setTitle(data.prize.title);
+        setDescription(data.prize.description || "");
+        setEmoji(data.prize.emoji || "🏆");
+      }
+    } catch (e) {
+      toast.error(formatApiError(e?.response?.data?.detail));
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const save = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await api.put("/monthly-prize", { title, description, emoji });
+      toast.success("Prêmio salvo!");
+      setEditing(false);
+      load();
+    } catch (err) {
+      toast.error(formatApiError(err?.response?.data?.detail));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!window.confirm("Remover o prêmio do mês?")) return;
+    try {
+      await api.delete("/monthly-prize");
+      toast.success("Prêmio removido");
+      setTitle(""); setDescription(""); setEmoji("🏆");
+      load();
+    } catch (err) {
+      toast.error(formatApiError(err?.response?.data?.detail));
+    }
+  };
+
+  if (!data) return null;
+
+  return (
+    <div data-testid="prize-editor">
+      <h2 className="font-heading font-bold text-2xl mb-3 flex items-center gap-2">
+        <Trophy className="w-6 h-6" /> Prêmio do mês
+      </h2>
+      <div className="nb-card bg-amber-100 p-5">
+        {!editing && data.prize ? (
+          <div className="space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 nb-card flex items-center justify-center bg-amber-300 text-2xl">{data.prize.emoji}</div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-heading font-black text-xl">{data.prize.title}</h3>
+                {data.prize.description && <p className="text-sm text-neutral-700 mt-1">{data.prize.description}</p>}
+                <p className="text-xs text-neutral-600 mt-2">
+                  Restam {data.days_remaining} dia{data.days_remaining === 1 ? "" : "s"}
+                  {data.leader && (
+                    <span> • Liderando: <span className="font-bold">{data.leader.name}</span> ({data.leader.points} pts)</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setEditing(true)} className="nb-btn bg-white px-3 py-1.5 text-sm flex items-center gap-1.5" data-testid="edit-prize-button">
+                <Pencil className="w-3.5 h-3.5" /> Editar
+              </button>
+              <button onClick={remove} className="nb-btn bg-red-200 hover:bg-red-300 px-3 py-1.5 text-sm flex items-center gap-1.5" data-testid="remove-prize-button">
+                <Trash2 className="w-3.5 h-3.5" /> Remover
+              </button>
+            </div>
+          </div>
+        ) : !editing && !data.prize ? (
+          <div className="text-center">
+            <p className="text-sm text-neutral-700 mb-3">Nenhum prêmio configurado.</p>
+            <button onClick={() => setEditing(true)} className="nb-btn bg-amber-300 px-4 py-2 flex items-center gap-2 mx-auto" data-testid="set-prize-button">
+              <Plus className="w-4 h-4" /> Definir prêmio do mês
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={save} className="space-y-3">
+            <div className="grid grid-cols-[80px_1fr] gap-3">
+              <div>
+                <label className="block text-xs font-bold mb-1">Emoji</label>
+                <input value={emoji} onChange={(e) => setEmoji(e.target.value)} maxLength={4} className="nb-input text-center text-2xl" data-testid="prize-emoji-input" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold mb-1">Prêmio</label>
+                <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: 1 caixa de bombom" className="nb-input" data-testid="prize-title-input" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1">Detalhes (opcional)</label>
+              <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex.: entrega no último dia letivo" className="nb-input resize-none" data-testid="prize-description-input" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setEditing(false)} className="nb-btn bg-white px-4 py-2 text-sm">Cancelar</button>
+              <button type="submit" disabled={submitting || !title.trim()} className="nb-btn bg-amber-300 px-4 py-2 text-sm" data-testid="save-prize-button">
+                {submitting ? "Salvando..." : "Salvar prêmio"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

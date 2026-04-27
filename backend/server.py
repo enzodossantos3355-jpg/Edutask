@@ -148,8 +148,9 @@ class UserOut(BaseModel):
     role: str
     status: str = "active"
     created_at: str
-    password: Optional[str] = None  # plain-text password, only returned to admin for aluno accounts
+    password: Optional[str] = None
     has_avatar: bool = False
+    points: int = 0
 
 
 class SubjectCreate(BaseModel):
@@ -193,6 +194,17 @@ class AnnouncementUpdate(BaseModel):
 
 class CommentCreate(BaseModel):
     text: str
+
+
+class PointsAdjust(BaseModel):
+    delta: int
+    reason: Optional[str] = None
+
+
+class MonthlyPrize(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    emoji: Optional[str] = "🏆"
 
 
 # ---------------------------------------------------------------------------
@@ -435,7 +447,7 @@ async def create_user(payload: UserCreate, _: dict = Depends(require_admin)):
 async def list_users(_: dict = Depends(require_admin)):
     users = await db.users.find(
         {"role": "aluno"},
-        {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "created_at": 1, "password_plain": 1, "avatar_path": 1},
+        {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "created_at": 1, "password_plain": 1, "avatar_path": 1, "points": 1},
     ).sort("created_at", -1).to_list(1000)
     return [
         UserOut(
@@ -444,6 +456,7 @@ async def list_users(_: dict = Depends(require_admin)):
             created_at=u["created_at"],
             password=u.get("password_plain"),
             has_avatar=bool(u.get("avatar_path")),
+            points=u.get("points", 0) or 0,
         )
         for u in users
     ]
@@ -609,6 +622,24 @@ async def delete_user(user_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Aluno não encontrado")
     await db.completions.delete_many({"user_id": user_id})
     return {"ok": True}
+
+
+@api_router.post("/users/{user_id}/points")
+async def adjust_points(user_id: str, payload: PointsAdjust, admin: dict = Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id, "role": "aluno"})
+    if not user:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    new_total = await _add_points(user_id, payload.delta)
+    await db.point_adjustments.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "user_name": user["name"],
+        "admin_id": admin["id"],
+        "delta": payload.delta,
+        "reason": (payload.reason or "").strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True, "total_points": new_total, "delta": payload.delta}
 
 
 # ---------------------------------------------------------------------------
@@ -933,6 +964,76 @@ async def delete_comment(ann_id: str, comment_id: str, user: dict = Depends(get_
     if user["role"] != "admin" and comment["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Sem permissão")
     await db.comments.delete_one({"id": comment_id})
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Monthly prize
+# ---------------------------------------------------------------------------
+def _month_bounds(now_br: datetime) -> tuple:
+    start = now_br.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        next_start = start.replace(year=start.year + 1, month=1)
+    else:
+        next_start = start.replace(month=start.month + 1)
+    return start, next_start
+
+
+@api_router.get("/monthly-prize")
+async def get_monthly_prize(_: dict = Depends(get_current_user)):
+    settings = await db.settings.find_one({"id": "monthly_prize"}, {"_id": 0})
+    prize = None
+    if settings:
+        prize = {
+            "title": settings.get("title"),
+            "description": settings.get("description", ""),
+            "emoji": settings.get("emoji", "🏆"),
+        }
+    students = await db.users.find({"role": "aluno"}, {"_id": 0, "id": 1, "name": 1, "points": 1, "avatar_path": 1}).to_list(1000)
+    students.sort(key=lambda s: -(s.get("points", 0) or 0))
+    leader = None
+    if students and (students[0].get("points", 0) or 0) > 0:
+        s0 = students[0]
+        leader = {
+            "id": s0["id"], "name": s0["name"],
+            "points": s0.get("points", 0) or 0,
+            "has_avatar": bool(s0.get("avatar_path")),
+        }
+    now_br = datetime.now(timezone.utc).astimezone(BR_TZ)
+    _, next_start = _month_bounds(now_br)
+    days_remaining = (next_start.date() - now_br.date()).days
+    end_date = (next_start - timedelta(seconds=1)).date().isoformat()
+    return {
+        "prize": prize,
+        "leader": leader,
+        "days_remaining": max(0, days_remaining),
+        "end_date": end_date,
+        "month_label": now_br.strftime("%B/%Y"),
+    }
+
+
+@api_router.put("/monthly-prize")
+async def set_monthly_prize(payload: MonthlyPrize, _: dict = Depends(require_admin)):
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Título obrigatório")
+    await db.settings.update_one(
+        {"id": "monthly_prize"},
+        {"$set": {
+            "id": "monthly_prize",
+            "title": title,
+            "description": (payload.description or "").strip(),
+            "emoji": (payload.emoji or "🏆"),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.delete("/monthly-prize")
+async def delete_monthly_prize(_: dict = Depends(require_admin)):
+    await db.settings.delete_one({"id": "monthly_prize"})
     return {"ok": True}
 
 
