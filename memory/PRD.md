@@ -1,72 +1,71 @@
-# Edutask - Product Requirements
+# Edutask — School Homework Management App
 
-## Original Problem Statement (PT-BR)
-"Faça um app de gerenciar tarefas de casa da escola que tenha um perfil admin que tem total controle do app e criar outros perfils, mas somente o admin pode mandar tarefas"
+## Original Problem Statement
+Build a homework management app with an Admin role that has total control over the app (create/manage other profiles) and Students who can only view and complete tasks. Netflix-style profile selection (no email for students), gamification, admin controls, auto cleanup.
 
-## User Personas
-- **Administrador (1)**: Cria/remove alunos, define status (ativo/manutenção/bloqueado), gerencia matérias, cria/edita/exclui tarefas com anexos, vê senhas dos alunos e progresso de cada tarefa.
-- **Aluno (N)**: Vê tarefas atribuídas, marca como concluídas, baixa anexos, filtra por matéria/status.
+## Roles
+- **Admin**: Total control — create/edit/delete students, create/edit/delete tasks and announcements, give/take points, see passwords, see login logs, manage monthly prize, manage app firmware/version.
+- **Aluno (Student)**: View tasks assigned to them, mark as complete, view announcements, comment, see points/tier/streak.
 
-## Architecture
-- **Backend**: FastAPI (Python) + MongoDB (motor) + bcrypt + PyJWT
-- **Frontend**: React 19 + React Router + Tailwind + Sonner + lucide-react
-- **Auth**: JWT em Bearer header (também aceita httpOnly cookie). Login via `user_id` (profile picker) ou `email` (legado)
-- **Storage**: Emergent Object Storage para anexos
-- **Deploy**: Supervisor (backend:8001, frontend:3000), Kubernetes ingress
+## Core Features (implemented)
+- Netflix-style profile picker + password login (no email for students)
+- Task CRUD with specific recipients + attachments + due dates + auto-delete at 12:30 BRT
+- Announcements with comments + recipients
+- Avatar uploads (students + admin override)
+- Gamification: points, streaks, 7 evolutionary tiers (Bronze → Obsidian), confetti
+- Monthly prize system with leaderboard
+- Admin: give/take points, block/maintenance status, view passwords, login logs (auto-cleanup 7d), stats dashboard
+- Dark mode toggle
+- Floating clock (hidden on login, repositioned on mobile)
+- **Firmware section** (new Feb 2026): admin can view/edit app version, codename, release notes, and manage a feature list. Export as JSON download.
 
-## Implemented (2026-04-25)
-### Iteração 1 — MVP
-- Tela de login estilo "Quem está usando?" com profile picker
-- Admin seedado automaticamente (admin@escola.com / enzo123cg)
-- CRUD de alunos (admin only, só nome + senha — sem email)
-- CRUD de tarefas com matéria, descrição, data de entrega, anexos
-- Marcar/desmarcar tarefa como concluída (aluno)
-- Visualização de progresso (admin)
-- Upload/download de anexos via Emergent Object Storage
-- Design neo-brutalista (Outfit + DM Sans, paleta pastel + bordas pretas)
-- Backend: 17/18 testes ✅
+## Tech Stack
+- Backend: FastAPI + MongoDB (Motor) + JWT auth + APScheduler background loops
+- Frontend: React + Tailwind + Shadcn UI + canvas-confetti
 
-### Iteração 2 — Funcionalidades extras
-- Logo customizado **Edutask** (SVG inline) com "Edu" em branco e "task" em azul
-- **Status do perfil**: ativo / em manutenção / bloqueado
-  - Profile picker mostra ícone (🛠️ chave / 🔒 cadeado) + dim no avatar
-  - Login bloqueado para perfis não ativos (HTTP 403 com mensagem PT-BR)
-  - Admin altera via dropdown no card do aluno
-- **Matérias pré-definidas** (CRUD pelo admin)
-  - 8 matérias seedadas: Matemática, Português, Ciências, História, Geografia, Inglês, Artes, Educação Física
-  - Aba "Matérias" no painel admin
-  - Criação de tarefa: dropdown ao invés de campo livre
-- **Prioridade automática por data**:
-  - 🔴 Urgente (atrasada/hoje), 🟠 Alta (1-2 dias), 🟡 Média (3-7 dias), 🟢 Baixa (>7 dias)
-  - Badge visível em cards de admin e aluno
-- **Senhas visíveis ao admin** (eye toggle no card do aluno)
-- Backend: 27/27 testes ✅
+## Key Files
+- `/app/backend/server.py` — all endpoints and models (1313 lines)
+- `/app/frontend/src/pages/AdminDashboard.jsx` — admin panels with tabs
+- `/app/frontend/src/pages/StudentDashboard.jsx` — student view
+- `/app/frontend/src/pages/LoginPage.jsx` — Netflix-style picker
+- `/app/frontend/src/components/FirmwarePanel.jsx` — firmware/version admin section (NEW)
+- `/app/frontend/src/components/AppHeader.jsx` — sticky header (mobile responsive)
+- `/app/frontend/src/components/Clock.jsx` — floating clock, bottom-right on mobile
+- `/app/frontend/src/components/MyProfileBanner.jsx` — profile info with StatsCard
+- `/app/frontend/src/context/AuthContext.js` — JWT storage
+- `/app/frontend/src/context/ThemeContext.js` — light/dark toggle
 
-### Iteração 3 — Avisos + atribuição por aluno
-- **Sistema de avisos** (announcements):
-  - CRUD pelo admin (POST/GET/DELETE `/api/announcements`)
-  - Aba "Avisos" no painel admin com cards roxos
-  - Banner no topo do dashboard do aluno mostrando avisos atribuídos
-- **Atribuição de tarefas e avisos**:
-  - Componente `RecipientSelector` reutilizável (Todos / Alunos específicos com checkboxes)
-  - `assigned_to` em tarefas e avisos: `[]` = todos, `[ids]` = específicos
-  - Backend filtra `/api/tasks` e `/api/announcements` para aluno por atribuição
-  - Card admin mostra badge "Todos" ou "N alunos"
-  - Progresso da tarefa só conta os alunos atribuídos
-- Backend: 39/39 testes ✅
+## Key API Endpoints
+- `/api/auth/login`, `/api/auth/profiles`, `/api/auth/me`
+- `/api/tasks` (CRUD + complete/uncomplete), `/api/announcements` (CRUD + comments)
+- `/api/users` (CRUD), `/api/me`, `/api/me/stats`, `/api/me/avatar`
+- `/api/subjects`, `/api/files/upload|download`
+- `/api/login-logs`, `/api/admin/stats`, `/api/monthly-prize`
+- `/api/app-info` (GET for all, PUT admin) — **NEW**
 
-## Backlog (P1)
-- Notificações push/email para tarefas urgentes
-- Edição de tarefas (botão "Editar" — endpoint PUT já existe)
-- Filtros adicionais no admin (por matéria/data/aluno)
-- Dashboard de estatísticas (engajamento por aluno)
+## Backend Models
+- `users` (email, name, password_hash, role, status, has_avatar, points, streak, longest_streak, last_login_date)
+- `tasks` (title, subject, due_date, assigned_to, attachments)
+- `announcements`, `comments`, `login_logs`, `point_adjustments`
+- `settings` (singleton docs: `monthly_prize`, `app_info`)
 
-## Backlog (P2)
-- Comentários do aluno na tarefa
-- Anexos do aluno como entrega (response files)
-- Dark mode
-- Multi-tenant (várias escolas/turmas)
-- Brute-force lockout no login (já documentado pelo testing agent)
+## Credentials
+- Admin: `admin@escola.com` / `enzo123cg`
+- Student: see `/app/memory/test_credentials.md`
 
-## Test Credentials
-Ver `/app/memory/test_credentials.md`
+## Backlog / Next
+- P1: IA Assistant to suggest task titles/descriptions
+- P1: Student upload of task answer (photo/PDF) for admin review
+- P1: Real-time notifications (WebSocket or polling)
+- P2: Split `server.py` into routers/models modules (>1300 lines)
+- P2: Brute-force lockout on login
+- P2: Push notifications (PWA)
+
+## Recent Changes (2026-02 / iter 4)
+- Added Firmware section (admin only) — version, codename, release notes, features editor
+- Added JSON download of firmware info
+- Mobile responsiveness polish across Login/Admin/Student dashboards
+- Floating clock hidden on login, repositioned to bottom-right on mobile
+- AppHeader sticky + compact on mobile
+- Dialogs now `p-5 sm:p-7` to fit small screens
+- 51/51 backend tests passing (incl. 12 new for `/api/app-info`)

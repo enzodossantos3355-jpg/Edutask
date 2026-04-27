@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Cpu, Pencil, Plus, Trash2, X, Check, RefreshCcw, Sparkles } from "lucide-react";
+import { Cpu, Pencil, Plus, Trash2, X, Check, RefreshCcw, Sparkles, Download } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
 
 const STATUS_META = {
@@ -68,6 +68,30 @@ export default function FirmwarePanel() {
     await saveFeatures(list);
   };
 
+  const downloadInfo = () => {
+    if (!info) return;
+    const payload = {
+      app: "Edutask",
+      version: info.version,
+      codename: info.codename || null,
+      release_notes: info.release_notes || "",
+      features: info.features || [],
+      updated_at: info.updated_at || null,
+      exported_at: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const safeVersion = (info.version || "0.0.0").replace(/[^a-zA-Z0-9._-]/g, "_");
+    a.download = `edutask-firmware-v${safeVersion}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success("Firmware exportado!");
+  };
+
   if (loading) return <p className="text-neutral-500">Carregando...</p>;
   if (!info) return null;
 
@@ -102,7 +126,7 @@ export default function FirmwarePanel() {
             </div>
             <div className="text-xs text-neutral-700 mt-2">Última atualização: <span className="font-bold">{updatedLabel}</span></div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={load}
               className="nb-btn bg-white hover:bg-sky-100 px-3 py-2 text-sm flex items-center gap-1.5"
@@ -110,6 +134,14 @@ export default function FirmwarePanel() {
               title="Recarregar"
             >
               <RefreshCcw className="w-3.5 h-3.5" /> Recarregar
+            </button>
+            <button
+              onClick={downloadInfo}
+              className="nb-btn bg-emerald-300 hover:bg-emerald-400 px-3 py-2 text-sm flex items-center gap-1.5"
+              data-testid="firmware-download"
+              title="Baixar informações em JSON"
+            >
+              <Download className="w-3.5 h-3.5" /> Baixar
             </button>
             <button
               onClick={() => setEditingMeta(true)}
