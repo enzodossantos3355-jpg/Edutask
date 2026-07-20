@@ -11,6 +11,7 @@ import logging
 import bcrypt
 import jwt
 import requests
+import httpx
 from datetime import datetime, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 from typing import List, Optional
@@ -45,9 +46,9 @@ APP_NAME = "school-tasks"
 storage_key: Optional[str] = None
 
 
-def init_storage() -> Optional[str]:
+def init_storage(force: bool = False) -> Optional[str]:
     global storage_key
-    if storage_key:
+    if storage_key and not force:
         return storage_key
     if not EMERGENT_KEY:
         logger.warning("EMERGENT_LLM_KEY not set - storage disabled")
@@ -60,32 +61,41 @@ def init_storage() -> Optional[str]:
         return storage_key
     except Exception as e:
         logger.error(f"Storage init failed: {e}")
+        storage_key = None
         return None
 
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
-    key = init_storage()
-    if not key:
-        raise HTTPException(status_code=500, detail="Storage not available")
-    resp = requests.put(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key, "Content-Type": content_type},
-        data=data, timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    for attempt in (0, 1):
+        key = init_storage(force=attempt == 1)
+        if not key:
+            raise HTTPException(status_code=500, detail="Storage not available")
+        resp = requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data, timeout=120,
+        )
+        if resp.status_code in (401, 403) and attempt == 0:
+            continue  # storage_key expired — refresh once and retry
+        resp.raise_for_status()
+        return resp.json()
+    raise HTTPException(status_code=500, detail="Storage authentication failed")
 
 
 def get_object(path: str):
-    key = init_storage()
-    if not key:
-        raise HTTPException(status_code=500, detail="Storage not available")
-    resp = requests.get(
-        f"{STORAGE_URL}/objects/{path}",
-        headers={"X-Storage-Key": key}, timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+    for attempt in (0, 1):
+        key = init_storage(force=attempt == 1)
+        if not key:
+            raise HTTPException(status_code=500, detail="Storage not available")
+        resp = requests.get(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key}, timeout=60,
+        )
+        if resp.status_code in (401, 403) and attempt == 0:
+            continue
+        resp.raise_for_status()
+        return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+    raise HTTPException(status_code=500, detail="Storage authentication failed")
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +215,7 @@ class MonthlyPrize(BaseModel):
     title: str
     description: Optional[str] = ""
     emoji: Optional[str] = "🏆"
+    image_id: Optional[str] = None
 
 
 class AppFeature(BaseModel):
@@ -219,6 +230,11 @@ class AppInfoUpdate(BaseModel):
     codename: Optional[str] = None
     release_notes: Optional[str] = None
     features: Optional[List[AppFeature]] = None
+
+
+class ZapierConfig(BaseModel):
+    webhook_url: Optional[str] = ""
+    enabled: Optional[bool] = False
 
 
 # ---------------------------------------------------------------------------
@@ -755,6 +771,17 @@ async def create_task(payload: TaskCreate, user: dict = Depends(require_admin)):
     }
     await db.tasks.insert_one(doc)
     doc.pop("_id", None)
+    _fire_zapier("task.created", {
+        "id": doc["id"],
+        "subject": doc["subject"],
+        "title": doc["title"],
+        "description": doc["description"],
+        "due_date": doc["due_date"],
+        "assigned_to": doc["assigned_to"],
+        "all_students": not doc["assigned_to"],
+        "created_by": doc["created_by"],
+        "created_at": doc["created_at"],
+    })
     return doc
 
 
@@ -814,6 +841,15 @@ async def create_announcement(payload: AnnouncementCreate, user: dict = Depends(
     }
     await db.announcements.insert_one(doc)
     doc.pop("_id", None)
+    _fire_zapier("announcement.created", {
+        "id": doc["id"],
+        "title": doc["title"],
+        "message": doc["message"],
+        "assigned_to": doc["assigned_to"],
+        "all_students": not doc["assigned_to"],
+        "created_by": doc["created_by"],
+        "created_at": doc["created_at"],
+    })
     return doc
 
 
@@ -1002,6 +1038,7 @@ async def get_monthly_prize(_: dict = Depends(get_current_user)):
             "title": settings.get("title"),
             "description": settings.get("description", ""),
             "emoji": settings.get("emoji", "🏆"),
+            "image_id": settings.get("image_id"),
         }
     students = await db.users.find({"role": "aluno"}, {"_id": 0, "id": 1, "name": 1, "points": 1, "avatar_path": 1}).to_list(1000)
     students.sort(key=lambda s: -(s.get("points", 0) or 0))
@@ -1031,15 +1068,17 @@ async def set_monthly_prize(payload: MonthlyPrize, _: dict = Depends(require_adm
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Título obrigatório")
+    doc = {
+        "id": "monthly_prize",
+        "title": title,
+        "description": (payload.description or "").strip(),
+        "emoji": (payload.emoji or "🏆"),
+        "image_id": payload.image_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
     await db.settings.update_one(
         {"id": "monthly_prize"},
-        {"$set": {
-            "id": "monthly_prize",
-            "title": title,
-            "description": (payload.description or "").strip(),
-            "emoji": (payload.emoji or "🏆"),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }},
+        {"$set": doc},
         upsert=True,
     )
     return {"ok": True}
@@ -1119,6 +1158,89 @@ async def set_app_info(payload: AppInfoUpdate, _: dict = Depends(require_admin))
     )
     doc = await db.settings.find_one({"id": "app_info"}, {"_id": 0})
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Make.com webhook integration
+# ---------------------------------------------------------------------------
+MAKE_WEBHOOK_URL = os.environ.get("MAKE_WEBHOOK_URL", "").strip()
+
+
+async def _send_make_event(event_type: str, payload: dict):
+    """Fire-and-forget POST to the configured Make.com webhook.
+
+    Failures are logged but never raised so they don't impact the user request.
+    """
+    if not MAKE_WEBHOOK_URL or not MAKE_WEBHOOK_URL.startswith("http"):
+        return
+    body = {
+        "event": event_type,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "app": "Edutask",
+        "data": payload,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client_http:
+            resp = await client_http.post(MAKE_WEBHOOK_URL, json=body)
+            logger.info(f"Make {event_type} → {resp.status_code}")
+            await db.webhook_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "event": event_type,
+                "status": resp.status_code,
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+            })
+    except Exception as e:
+        logger.error(f"Make webhook failed for {event_type}: {e}")
+        try:
+            await db.webhook_logs.insert_one({
+                "id": str(uuid.uuid4()),
+                "event": event_type,
+                "status": "error",
+                "error": str(e)[:300],
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+
+
+def _fire_webhook(event_type: str, payload: dict):
+    """Schedule the webhook call without blocking the caller."""
+    asyncio.create_task(_send_make_event(event_type, payload))
+
+
+@api_router.get("/integrations/webhook-logs")
+async def get_webhook_logs(_: dict = Depends(require_admin)):
+    """Last 50 webhook calls for admin diagnostics."""
+    logs = await db.webhook_logs.find({}, {"_id": 0}).sort("sent_at", -1).to_list(50)
+    return {
+        "configured": bool(MAKE_WEBHOOK_URL),
+        "webhook_url": MAKE_WEBHOOK_URL[:60] + "..." if len(MAKE_WEBHOOK_URL) > 60 else MAKE_WEBHOOK_URL,
+        "logs": logs,
+    }
+
+
+@api_router.post("/integrations/webhook-test")
+async def test_webhook(_: dict = Depends(require_admin)):
+    if not MAKE_WEBHOOK_URL:
+        raise HTTPException(status_code=400, detail="Make webhook não configurado no servidor")
+    body = {
+        "event": "test",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "app": "Edutask",
+        "data": {"message": "Teste de webhook do Edutask 🎉"},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client_http:
+            resp = await client_http.post(MAKE_WEBHOOK_URL, json=body)
+        await db.webhook_logs.insert_one({
+            "id": str(uuid.uuid4()),
+            "event": "test",
+            "status": resp.status_code,
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return {"ok": True, "status": resp.status_code}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha: {e}")
 
 
 @api_router.put("/announcements/{ann_id}")

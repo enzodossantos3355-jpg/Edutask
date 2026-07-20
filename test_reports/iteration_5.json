@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 5 - validated avatar upload bug fix (EMERGENT_LLM_KEY rotation + storage_key auto-refresh on 401/403). All avatar flows and file upload regression pass. Discovered UNRELATED critical bug: _fire_zapier() is referenced but never defined, breaking POST /api/tasks and POST /api/announcements with 500 NameError.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/tasks", "issue": "500 NameError: name '_fire_zapier' is not defined (server.py:774). Task creation is completely broken.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/announcements", "issue": "500 NameError: name '_fire_zapier' is not defined (server.py:844). Announcement creation is completely broken.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "avatar_bug_fix_validation": {
+    "status": "VERIFIED FIXED",
+    "evidence": [
+      "EMERGENT_LLM_KEY in /app/backend/.env is set to sk-emergent-c3fA1952f6b76E3830 (rotated).",
+      "Backend log shows 'Storage initialized' after latest restart; no 'Storage init failed: 401' after rotation.",
+      "POST /api/me/avatar (admin, PNG) -> 200 OK, has_avatar=true, GET /api/avatars/{id} returns image/png bytes.",
+      "POST /api/users/{id}/avatar (admin uploads for student) -> 200 OK, image retrievable.",
+      "Student self-upload POST /api/me/avatar -> 200 OK; DELETE /api/me/avatar -> 200; then GET /api/avatars/{id} -> 404 as expected.",
+      "Regression POST /api/files/upload + GET /api/files/{id}/download -> 200 with original bytes."
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_avatar_upload.py",
+    "/app/test_reports/pytest/iter5_results.xml"
+  ],
+  "action_items": [
+    "URGENT: Define _fire_zapier() (or remove the calls) in /app/backend/server.py — currently referenced at lines 774 (create_task) and 844 (create_announcement) but never defined, causing 500 on every task/announcement creation. This is unrelated to the avatar bug fix but blocks core app functionality.",
+    "No action needed for the avatar upload bug — fix confirmed working end-to-end."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 1435 lines — consider splitting into modules (auth, avatars, tasks, announcements, storage).",
+    "_fire_zapier is used but not defined — this suggests either an incomplete refactor removed the function, or a missing import. Add a stub or restore the function.",
+    "put_object/get_object retry logic on 401/403 (init_storage(force=True)) is correctly implemented and validated by tests."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter5_avatar_upload.py (new)"
+  ],
+  "success_rate": {"backend": "67% (4/6 tests pass; 2 failures are unrelated pre-existing bug)"},
+  "test_credentials": "admin@escola.com / enzo123cg (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Test student created & deleted per run (TEST_stu_*). No orphan data.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Avatar upload bug fix VERIFIED. If main agent fixes _fire_zapier NameError, re-run the last two tests in TestTasksAnnouncementsRegression. Storage API auth via EMERGENT_LLM_KEY is working; the rotated key is valid.",
+  "rca_of_unrelated_issue": "server.py calls _fire_zapier('task.created', {...}) at line 774 and _fire_zapier('announcement.created', {...}) at line 844. `grep -n _fire_zapier server.py` shows only these two call sites — no definition, no import. Tracebacks confirm NameError. Fix: define the helper (e.g., an async no-op / httpx.post to a webhook env var), or remove both calls."
+}
