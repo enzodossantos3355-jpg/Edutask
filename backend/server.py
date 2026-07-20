@@ -237,6 +237,9 @@ class ZapierConfig(BaseModel):
     enabled: Optional[bool] = False
 
 
+# (legacy — kept for potential future user-configurable webhook UI; not used by Make integration)
+
+
 # ---------------------------------------------------------------------------
 # Points / Streak helpers
 # ---------------------------------------------------------------------------
@@ -771,7 +774,7 @@ async def create_task(payload: TaskCreate, user: dict = Depends(require_admin)):
     }
     await db.tasks.insert_one(doc)
     doc.pop("_id", None)
-    _fire_zapier("task.created", {
+    _fire_webhook("task.created", {
         "id": doc["id"],
         "subject": doc["subject"],
         "title": doc["title"],
@@ -841,7 +844,7 @@ async def create_announcement(payload: AnnouncementCreate, user: dict = Depends(
     }
     await db.announcements.insert_one(doc)
     doc.pop("_id", None)
-    _fire_zapier("announcement.created", {
+    _fire_webhook("announcement.created", {
         "id": doc["id"],
         "title": doc["title"],
         "message": doc["message"],
