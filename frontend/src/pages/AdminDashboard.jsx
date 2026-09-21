@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3, Trophy, Minus, Cpu, Sparkles } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3, Trophy, Minus, Cpu, Sparkles, Coins, ShoppingBag } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
@@ -12,6 +12,7 @@ import Avatar from "@/components/Avatar";
 import FirmwarePanel from "@/components/FirmwarePanel";
 import AIEnhanceButton from "@/components/AIEnhanceButton";
 import AIAdminPanel from "@/components/AIAdminPanel";
+import StoreEffects from "@/components/StoreEffects";
 import { getTier } from "@/lib/tiers";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
@@ -88,6 +89,13 @@ export default function AdminDashboard() {
           >
             <Sparkles className="w-4 h-4 inline mr-1.5 sm:mr-2" /> IA
           </button>
+          <button
+            onClick={() => setTab("store")}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "store" ? "bg-amber-300" : "bg-white"}`}
+            data-testid="tab-store"
+          >
+            <ShoppingBag className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Loja
+          </button>
         </div>
         {tab === "tasks" && <TasksPanel />}
         {tab === "announcements" && <AnnouncementsPanel />}
@@ -97,6 +105,7 @@ export default function AdminDashboard() {
         {tab === "stats" && <StatsPanel />}
         {tab === "firmware" && <FirmwarePanel />}
         {tab === "ai" && <AIAdminPanel />}
+        {tab === "store" && <StoreEffects />}
       </div>
     </div>
   );
@@ -340,6 +349,7 @@ function TaskDialog({ task, onClose, onSaved }) {
     (currentTask?.admin_photos || []).map((a) => ({ id: a.id, filename: a.original_filename }))
   );
   const [answer, setAnswer] = useState(currentTask?.answer || "");
+  const [points, setPoints] = useState(currentTask?.points ?? 10);
   const [uploading, setUploading] = useState(false);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const [generatingAnswer, setGeneratingAnswer] = useState(false);
@@ -414,6 +424,7 @@ function TaskDialog({ task, onClose, onSaved }) {
           attachments: files.map((f) => f.id),
           admin_photos: adminPhotos.map((f) => f.id),
           answer,
+          points: Math.max(0, parseInt(points, 10) || 0),
           assigned_to: assignedTo,
         });
         currentTaskId = data.id;
@@ -447,6 +458,7 @@ function TaskDialog({ task, onClose, onSaved }) {
         attachments: files.map((f) => f.id),
         admin_photos: adminPhotos.map((f) => f.id),
         answer,
+        points: Math.max(0, parseInt(points, 10) || 0),
         assigned_to: assignedTo,
       };
       if (currentTask?.id) {
@@ -500,6 +512,24 @@ function TaskDialog({ task, onClose, onSaved }) {
               <label className="block text-sm font-bold mb-1.5">Data de entrega</label>
               <input type="date" required value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="nb-input" data-testid="task-due-date-input" />
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-bold mb-1.5 flex items-center gap-1.5">
+              <Coins className="w-3.5 h-3.5" /> Pontos ao concluir
+            </label>
+            <input
+              type="number"
+              min="0"
+              max="500"
+              value={points}
+              onChange={(e) => setPoints(e.target.value)}
+              className="nb-input"
+              data-testid="task-points-input"
+              placeholder="10"
+            />
+            <p className="text-[10px] text-neutral-500 mt-1">
+              Aluno ganha <b>{parseInt(points,10)||10}</b> pts no prazo, <b>{Math.max(1, Math.floor((parseInt(points, 10) || 10) * 0.3))}</b> pts atrasado.
+            </p>
           </div>
           <div>
             <label className="block text-sm font-bold mb-1.5">Título</label>

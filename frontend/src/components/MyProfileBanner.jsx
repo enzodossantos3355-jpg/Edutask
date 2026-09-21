@@ -3,6 +3,7 @@ import { Pencil } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
 import AvatarUploader from "@/components/AvatarUploader";
+import { effectClass } from "@/lib/effects";
 import EditProfileDialog from "@/components/EditProfileDialog";
 import StatsCard from "@/components/StatsCard";
 import Avatar from "@/components/Avatar";
@@ -44,6 +45,7 @@ export default function MyProfileBanner({ bg = "bg-amber-200" }) {
             size={64}
             bg={user.role === "admin" ? "bg-red-300" : "bg-sky-300"}
             tierBorderColor={isAluno && tier ? tier.borderHex : null}
+            effect={effectClass(user.equipped_effect)}
           />
           <div className="min-w-0">
             <p className="font-heading font-bold text-base sm:text-lg leading-tight flex items-center gap-2">

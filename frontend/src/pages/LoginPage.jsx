@@ -6,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import api, { formatApiError } from "@/lib/api";
 import Logo from "@/components/Logo";
 import Avatar from "@/components/Avatar";
+import { effectClass } from "@/lib/effects";
 import { getTierByName } from "@/lib/tiers";
 
 const STATUS_META = {
@@ -155,6 +156,7 @@ export default function LoginPage() {
                             bg={p.role === "admin" ? "bg-red-300" : "bg-sky-300"}
                             className={meta.dim ? "grayscale" : ""}
                             tierBorderColor={tier && p.role === "aluno" ? tier.borderHex : null}
+                            effect={!meta.dim ? effectClass(p.equipped_effect) : null}
                           />
                         </div>
                         <div className="font-heading font-bold text-base leading-tight truncate">{p.name}</div>
@@ -203,6 +205,7 @@ export default function LoginPage() {
                     size={96}
                     hasAvatar={selected.has_avatar}
                     bg={selected.role === "admin" ? "bg-red-300" : "bg-sky-300"}
+                    effect={effectClass(selected.equipped_effect)}
                   />
                 </div>
                 <h2 className="font-heading font-black text-2xl mb-1">Olá, {selected.name}!</h2>

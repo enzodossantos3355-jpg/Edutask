@@ -15,6 +15,7 @@ export default function Avatar({
   className = "",
   textClassName = "",
   tierBorderColor = null,
+  effect = null,
 }) {
   const [src, setSrc] = useState(null);
   const [errored, setErrored] = useState(false);
@@ -52,10 +53,21 @@ export default function Avatar({
     </div>
   );
 
-  if (!tierBorderColor) return inner;
+  if (!tierBorderColor) {
+    if (!effect || effect === "none") return inner;
+    return (
+      <div
+        className={`fx-avatar-wrapper ${effect}`}
+        style={{ width: size + 8, height: size + 8 }}
+        data-testid={`avatar-effect-${userId}`}
+      >
+        {inner}
+      </div>
+    );
+  }
 
   const ringSize = size + 12;
-  return (
+  const wrapped = (
     <div
       className="inline-flex items-center justify-center"
       style={{
@@ -69,6 +81,16 @@ export default function Avatar({
       data-testid={`avatar-tier-wrapper-${userId}`}
     >
       {inner}
+    </div>
+  );
+  if (!effect || effect === "none") return wrapped;
+  return (
+    <div
+      className={`fx-avatar-wrapper ${effect}`}
+      style={{ width: ringSize + 8, height: ringSize + 8 }}
+      data-testid={`avatar-effect-${userId}`}
+    >
+      {wrapped}
     </div>
   );
 }

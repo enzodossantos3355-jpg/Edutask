@@ -139,6 +139,7 @@ class ProfileOut(BaseModel):
     has_avatar: bool = False
     tier_name: Optional[str] = None
     points: int = 0
+    equipped_effect: Optional[str] = None
 
 
 class UserCreate(BaseModel):
@@ -184,6 +185,7 @@ class TaskCreate(BaseModel):
     assigned_to: List[str] = []  # list of student ids; empty = all students
     admin_photos: List[str] = []  # file ids visible only to admin (used by AI to generate answer)
     answer: Optional[str] = ""    # generated/edited answer visible to students
+    points: Optional[int] = 10    # points awarded to students on completion
 
 
 class TaskUpdate(BaseModel):
@@ -195,6 +197,19 @@ class TaskUpdate(BaseModel):
     assigned_to: Optional[List[str]] = None
     admin_photos: Optional[List[str]] = None
     answer: Optional[str] = None
+    points: Optional[int] = None
+
+
+class EffectPriceUpdate(BaseModel):
+    cost: int
+
+
+class EffectBuyIn(BaseModel):
+    effect_id: str
+
+
+class EffectEquipIn(BaseModel):
+    effect_id: Optional[str] = None  # None to unequip
 
 
 class AnnouncementCreate(BaseModel):
@@ -360,13 +375,14 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
 @api_router.get("/auth/profiles", response_model=List[ProfileOut])
 async def list_profiles():
     """Public endpoint: lists all profiles (id + name + role + status + has_avatar + tier)."""
-    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "avatar_path": 1, "points": 1}).to_list(1000)
+    users = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "role": 1, "status": 1, "avatar_path": 1, "points": 1, "equipped_effect": 1}).to_list(1000)
     for u in users:
         u.setdefault("status", "active")
         u["has_avatar"] = bool(u.pop("avatar_path", None))
         pts = u.get("points", 0) or 0
         u["points"] = pts
         u["tier_name"] = get_tier(pts)["name"] if u.get("role") == "aluno" else None
+        u["equipped_effect"] = u.get("equipped_effect") or "none"
     users.sort(key=lambda u: (0 if u["role"] == "admin" else 1, u["name"].lower()))
     return [ProfileOut(**u) for u in users]
 
@@ -790,6 +806,7 @@ async def create_task(payload: TaskCreate, user: dict = Depends(require_admin)):
         "assigned_to": payload.assigned_to,  # [] = all students
         "admin_photos": payload.admin_photos or [],
         "answer": (payload.answer or "").strip(),
+        "points": max(0, int(payload.points if payload.points is not None else 10)),
         "created_by": user["id"],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1185,6 +1202,112 @@ async def set_app_info(payload: AppInfoUpdate, _: dict = Depends(require_admin))
     )
     doc = await db.settings.find_one({"id": "app_info"}, {"_id": 0})
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Profile Effects Store
+# ---------------------------------------------------------------------------
+DEFAULT_EFFECTS = [
+    {"id": "none", "name": "Padrão", "emoji": "⚪", "description": "Sem efeito visual", "cost": 0, "css": "", "rarity": "common"},
+    {"id": "neon_pulse", "name": "Pulso Neon", "emoji": "💠", "description": "Aura azul que pulsa suavemente.", "cost": 50, "css": "fx-neon-pulse", "rarity": "common"},
+    {"id": "sunset", "name": "Pôr do Sol", "emoji": "🌅", "description": "Contorno degradê laranja e rosa.", "cost": 80, "css": "fx-sunset", "rarity": "common"},
+    {"id": "golden", "name": "Ouro Reluzente", "emoji": "🥇", "description": "Brilho dourado giratório.", "cost": 150, "css": "fx-golden", "rarity": "rare"},
+    {"id": "rainbow", "name": "Arco-Íris", "emoji": "🌈", "description": "Borda que muda de cor.", "cost": 200, "css": "fx-rainbow", "rarity": "rare"},
+    {"id": "ice", "name": "Gelo", "emoji": "❄️", "description": "Cristais azuis brilhantes.", "cost": 220, "css": "fx-ice", "rarity": "rare"},
+    {"id": "fire", "name": "Fogo", "emoji": "🔥", "description": "Chamas dançantes.", "cost": 250, "css": "fx-fire", "rarity": "rare"},
+    {"id": "hologram", "name": "Holograma", "emoji": "👾", "description": "Efeito cyberpunk irisado.", "cost": 350, "css": "fx-hologram", "rarity": "epic"},
+    {"id": "galaxy", "name": "Galáxia", "emoji": "🌌", "description": "Nebulosa roxa animada.", "cost": 500, "css": "fx-galaxy", "rarity": "epic"},
+    {"id": "electric", "name": "Elétrico", "emoji": "⚡", "description": "Raios amarelos ao redor.", "cost": 600, "css": "fx-electric", "rarity": "epic"},
+    {"id": "shadow", "name": "Sombra Real", "emoji": "🖤", "description": "Contorno em ébano pulsante.", "cost": 700, "css": "fx-shadow", "rarity": "epic"},
+    {"id": "phoenix", "name": "Fênix", "emoji": "🔴", "description": "Chama vermelha renascente.", "cost": 900, "css": "fx-phoenix", "rarity": "legendary"},
+    {"id": "diamond", "name": "Diamante", "emoji": "💎", "description": "Cintilação de diamante.", "cost": 1200, "css": "fx-diamond", "rarity": "legendary"},
+]
+
+
+async def _get_effects_catalog() -> list:
+    """Return the current effect catalog, seeding defaults if empty and merging admin overrides."""
+    doc = await db.settings.find_one({"id": "effects_catalog"}, {"_id": 0})
+    overrides = (doc or {}).get("overrides", {})  # {effect_id: {cost: N}}
+    catalog = []
+    for eff in DEFAULT_EFFECTS:
+        o = overrides.get(eff["id"], {})
+        catalog.append({**eff, **({"cost": int(o["cost"])} if "cost" in o else {})})
+    return catalog
+
+
+@api_router.get("/effects")
+async def list_effects(user: dict = Depends(get_current_user)):
+    catalog = await _get_effects_catalog()
+    if user["role"] == "admin":
+        owned_ids = [e["id"] for e in catalog]  # admin has everything
+    else:
+        owned_ids = user.get("owned_effects") or ["none"]
+        if "none" not in owned_ids:
+            owned_ids.append("none")
+    equipped = user.get("equipped_effect") or "none"
+    return {
+        "effects": catalog,
+        "owned": owned_ids,
+        "equipped": equipped,
+        "points": user.get("points", 0),
+    }
+
+
+@api_router.put("/effects/{effect_id}")
+async def update_effect_cost(effect_id: str, payload: EffectPriceUpdate, _: dict = Depends(require_admin)):
+    catalog = await _get_effects_catalog()
+    if not any(e["id"] == effect_id for e in catalog):
+        raise HTTPException(status_code=404, detail="Efeito não encontrado")
+    if payload.cost < 0:
+        raise HTTPException(status_code=400, detail="Custo não pode ser negativo")
+    await db.settings.update_one(
+        {"id": "effects_catalog"},
+        {"$set": {f"overrides.{effect_id}.cost": int(payload.cost),
+                  "updated_at": datetime.now(timezone.utc).isoformat()},
+         "$setOnInsert": {"id": "effects_catalog"}},
+        upsert=True,
+    )
+    return {"ok": True, "effect_id": effect_id, "new_cost": payload.cost}
+
+
+@api_router.post("/me/effects/buy")
+async def buy_effect(payload: EffectBuyIn, user: dict = Depends(get_current_user)):
+    if user["role"] == "admin":
+        # admin unlocks are automatic — still return success
+        return {"ok": True, "already_owned": True}
+    catalog = await _get_effects_catalog()
+    effect = next((e for e in catalog if e["id"] == payload.effect_id), None)
+    if not effect:
+        raise HTTPException(status_code=404, detail="Efeito não encontrado")
+    owned = user.get("owned_effects") or []
+    if effect["id"] in owned or effect["id"] == "none":
+        return {"ok": True, "already_owned": True}
+    cost = int(effect["cost"])
+    current_points = int(user.get("points") or 0)
+    if current_points < cost:
+        raise HTTPException(status_code=400, detail=f"Você precisa de {cost} pontos (tem {current_points})")
+    # Deduct + add to owned
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$inc": {"points": -cost}, "$addToSet": {"owned_effects": effect["id"]}},
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0, "points": 1, "owned_effects": 1})
+    return {"ok": True, "points": updated.get("points", 0), "owned_effects": updated.get("owned_effects", [])}
+
+
+@api_router.post("/me/effects/equip")
+async def equip_effect(payload: EffectEquipIn, user: dict = Depends(get_current_user)):
+    catalog = await _get_effects_catalog()
+    effect_id = payload.effect_id or "none"
+    if not any(e["id"] == effect_id for e in catalog):
+        raise HTTPException(status_code=404, detail="Efeito não encontrado")
+    # Admin can equip anything; students must own it
+    if user["role"] != "admin":
+        owned = user.get("owned_effects") or ["none"]
+        if effect_id != "none" and effect_id not in owned:
+            raise HTTPException(status_code=400, detail="Você ainda não comprou esse efeito")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"equipped_effect": effect_id}})
+    return {"ok": True, "equipped": effect_id}
 
 
 # ---------------------------------------------------------------------------
@@ -2022,10 +2145,13 @@ async def complete_task(task_id: str, user: dict = Depends(get_current_user)):
     await db.completions.insert_one({
         "task_id": task_id, "user_id": user["id"], "completed_at": completed_at,
     })
-    # Award points: 10 if on-time, 3 if late
+    # Award points: task.points if on-time, 30% (min 1) if late
     today = _br_today_iso()
     on_time = task.get("due_date", "9999-12-31") >= today
-    earned = 10 if on_time else 3
+    base_points = int(task.get("points") or 10)
+    if base_points < 0:
+        base_points = 0
+    earned = base_points if on_time else max(1, int(base_points * 0.3))
     new_total = await _add_points(user["id"], earned)
     return {"ok": True, "completed_at": completed_at, "points_earned": earned, "total_points": new_total, "on_time": on_time}
 
@@ -2043,8 +2169,11 @@ async def uncomplete_task(task_id: str, user: dict = Depends(get_current_user)):
         completed_at = completion.get("completed_at", "")
         completed_date = completed_at.split("T")[0] if completed_at else today
         on_time = task.get("due_date", "9999-12-31") >= completed_date
-        delta = -(10 if on_time else 3)
-        await _add_points(user["id"], delta)
+        base_points = int(task.get("points") or 10)
+        if base_points < 0:
+            base_points = 0
+        awarded = base_points if on_time else max(1, int(base_points * 0.3))
+        await _add_points(user["id"], -awarded)
     return {"ok": True}
 
 

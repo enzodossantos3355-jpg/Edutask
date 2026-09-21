@@ -18,6 +18,7 @@ export default function AvatarUploader({
   size = 96,
   bg = "bg-sky-300",
   tierBorderColor = null,
+  effect = null,
 }) {
   const fileInputRef = useRef(null);
   const [uploading, setUploading] = useState(false);
@@ -60,7 +61,7 @@ export default function AvatarUploader({
   return (
     <div className="flex items-center gap-4" data-testid="avatar-uploader">
       <div className="relative">
-        <Avatar userId={userId} name={name} size={size} hasAvatar={hasAvatar} version={version} bg={bg} tierBorderColor={tierBorderColor} />
+        <Avatar userId={userId} name={name} size={size} hasAvatar={hasAvatar} version={version} bg={bg} tierBorderColor={tierBorderColor} effect={effect} />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}

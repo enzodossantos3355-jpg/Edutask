@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter, Megaphone, LayoutGrid, CalendarDays, Sparkles } from "lucide-react";
+import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter, Megaphone, LayoutGrid, CalendarDays, Sparkles, ShoppingBag } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import MyProfileBanner from "@/components/MyProfileBanner";
@@ -8,6 +8,7 @@ import AnnouncementComments from "@/components/AnnouncementComments";
 import TaskCalendar from "@/components/TaskCalendar";
 import PrizeBanner from "@/components/PrizeBanner";
 import AIDailySummary from "@/components/AIDailySummary";
+import StoreEffects from "@/components/StoreEffects";
 import { getPriority, formatDateBR, daysUntil } from "@/lib/priority";
 import { fireConfetti } from "@/lib/celebrate";
 
@@ -21,6 +22,7 @@ export default function StudentDashboard() {
   const [filter, setFilter] = useState("todas");
   const [subjectFilter, setSubjectFilter] = useState("todas");
   const [view, setView] = useState("cards"); // "cards" | "calendar"
+  const [tab, setTab] = useState("tasks"); // "tasks" | "store"
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,6 +89,27 @@ export default function StudentDashboard() {
         <MyProfileBanner bg="bg-sky-100" />
         <PrizeBanner />
         <AIDailySummary />
+
+        <div className="flex gap-2 mb-6 flex-wrap">
+          <button
+            onClick={() => setTab("tasks")}
+            className={`nb-btn px-4 py-2 text-sm flex items-center gap-1.5 ${tab === "tasks" ? "bg-sky-400" : "bg-white"}`}
+            data-testid="student-tab-tasks"
+          >
+            <BookOpen className="w-4 h-4" /> Minhas tarefas
+          </button>
+          <button
+            onClick={() => setTab("store")}
+            className={`nb-btn px-4 py-2 text-sm flex items-center gap-1.5 ${tab === "store" ? "bg-amber-300" : "bg-white"}`}
+            data-testid="student-tab-store"
+          >
+            <ShoppingBag className="w-4 h-4" /> Loja
+          </button>
+        </div>
+
+        {tab === "store" ? (
+          <StoreEffects />
+        ) : (<>
         <div className="mb-6 sm:mb-8">
           <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Olá! Vamos estudar?</h1>
           <p className="text-neutral-600 mt-1">Marque suas tarefas conforme as conclui.</p>
@@ -202,6 +225,7 @@ export default function StudentDashboard() {
             ))}
           </div>
         )}
+        </>)}
       </div>
     </div>
   );
@@ -239,10 +263,15 @@ function StudentTaskCard({ task, onToggle, index }) {
           {priority.icon} {priority.label}
         </span>
       </div>
-      <div className="flex items-center gap-2 text-xs mb-3">
+      <div className="flex items-center gap-2 text-xs mb-3 flex-wrap">
         <span className={`nb-badge ${dueBg}`}>
           <CalendarIcon className="w-3 h-3 inline mr-1 -mt-0.5" /> {dueLabel}
         </span>
+        {task.points > 0 && (
+          <span className="nb-badge bg-amber-200" data-testid={`task-points-${task.id}`}>
+            +{task.points} pts
+          </span>
+        )}
       </div>
       <h3 className={`font-heading font-bold text-xl mb-1 leading-tight ${task.completed ? "line-through" : ""}`}>
         {task.title}
