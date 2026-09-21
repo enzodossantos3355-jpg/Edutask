@@ -25,7 +25,7 @@ export default function TaskCalendar({ tasks }) {
     tasksByDate[t.due_date].push(t);
   });
 
-  const todayIso = today.toISOString().slice(0, 10);
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
   const goPrev = () => setCursor(new Date(year, month - 1, 1));
   const goNext = () => setCursor(new Date(year, month + 1, 1));

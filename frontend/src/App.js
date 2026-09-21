@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { AIStatusProvider } from "@/context/AIStatusContext";
 import LoginPage from "@/pages/LoginPage";
 import AdminDashboard from "@/pages/AdminDashboard";
 import StudentDashboard from "@/pages/StudentDashboard";
@@ -53,6 +54,7 @@ function App() {
       <BrowserRouter>
         <ThemeProvider>
           <AuthProvider>
+            <AIStatusProvider>
             <Toaster position="top-right" richColors />
             <AuthedClock />
             <Routes>
@@ -75,6 +77,7 @@ function App() {
                 }
               />
             </Routes>
+            </AIStatusProvider>
           </AuthProvider>
         </ThemeProvider>
       </BrowserRouter>

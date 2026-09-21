@@ -1277,6 +1277,35 @@ AI_MODEL = "gemini-3-flash-preview"
 AI_PROVIDER = "gemini"
 
 
+async def _ai_enabled() -> bool:
+    doc = await db.settings.find_one({"id": "ai_config"}, {"_id": 0})
+    if not doc:
+        return True  # default ON
+    return bool(doc.get("enabled", True))
+
+
+async def _ensure_ai_enabled():
+    if not await _ai_enabled():
+        raise HTTPException(status_code=503, detail="Recursos de IA estão desativados pelo administrador")
+
+
+@api_router.get("/ai/status")
+async def ai_status(_: dict = Depends(get_current_user)):
+    """Public (auth-required) status of AI features. Frontend uses this to hide/show buttons."""
+    return {"enabled": await _ai_enabled()}
+
+
+@api_router.put("/ai/status")
+async def set_ai_status(body: dict, _: dict = Depends(require_admin)):
+    enabled = bool(body.get("enabled", True))
+    await db.settings.update_one(
+        {"id": "ai_config"},
+        {"$set": {"id": "ai_config", "enabled": enabled, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"enabled": enabled}
+
+
 def _new_ai_chat(session_id: str, system_message: str) -> LlmChat:
     """Fresh LlmChat instance per request (session-scoped)."""
     return LlmChat(
@@ -1332,6 +1361,7 @@ def _strip_json_fence(text: str) -> str:
 
 @api_router.post("/ai/improve-task")
 async def ai_improve_task(payload: AIImproveTaskIn, admin: dict = Depends(require_admin)):
+    await _ensure_ai_enabled()
     if not EMERGENT_KEY:
         raise HTTPException(status_code=503, detail="IA não configurada")
     title = payload.title.strip()
@@ -1375,6 +1405,7 @@ async def ai_improve_task(payload: AIImproveTaskIn, admin: dict = Depends(requir
 
 @api_router.post("/ai/generate-announcement")
 async def ai_generate_announcement(payload: AIGenAnnouncementIn, admin: dict = Depends(require_admin)):
+    await _ensure_ai_enabled()
     if not EMERGENT_KEY:
         raise HTTPException(status_code=503, detail="IA não configurada")
     prompt_text = payload.prompt.strip()
@@ -1409,6 +1440,7 @@ async def ai_generate_announcement(payload: AIGenAnnouncementIn, admin: dict = D
 
 @api_router.post("/ai/check-answer")
 async def ai_check_answer(payload: AICheckAnswerIn, admin: dict = Depends(require_admin)):
+    await _ensure_ai_enabled()
     if not EMERGENT_KEY:
         raise HTTPException(status_code=503, detail="IA não configurada")
     answer = payload.student_answer.strip()
@@ -1452,6 +1484,7 @@ async def ai_generate_task_answer(payload: AIGenTaskAnswerIn, admin: dict = Depe
     answer/solution for the task. Returns the answer as plain text — admin can then
     review/edit and save it back to the task via PUT /api/tasks/{id}.
     """
+    await _ensure_ai_enabled()
     if not EMERGENT_KEY:
         raise HTTPException(status_code=503, detail="IA não configurada")
     task = await db.tasks.find_one({"id": payload.task_id}, {"_id": 0})
@@ -1507,6 +1540,7 @@ async def ai_generate_task_answer(payload: AIGenTaskAnswerIn, admin: dict = Depe
 @api_router.post("/ai/explain-task")
 async def ai_explain_task(payload: AIExplainTaskIn, user: dict = Depends(get_current_user)):
     """Student-facing: explains what the task is asking without giving the answer."""
+    await _ensure_ai_enabled()
     if not EMERGENT_KEY:
         raise HTTPException(status_code=503, detail="IA não configurada")
     task = await db.tasks.find_one({"id": payload.task_id}, {"_id": 0})
@@ -1558,6 +1592,7 @@ async def ai_chat(payload: AIChatIn, user: dict = Depends(get_current_user)):
     Sessions are stored in db.ai_chats (one doc per session).
     Each POST appends user+assistant messages and returns the assistant reply.
     """
+    await _ensure_ai_enabled()
     if not EMERGENT_KEY:
         raise HTTPException(status_code=503, detail="IA não configurada")
     text = payload.message.strip()
@@ -1651,6 +1686,8 @@ async def ai_chat_delete(session_id: str, user: dict = Depends(get_current_user)
 @api_router.get("/ai/daily-summary")
 async def ai_daily_summary(user: dict = Depends(get_current_user)):
     """Short personalized summary of the student's pending tasks for today."""
+    if not await _ai_enabled():
+        return {"summary": "", "count": 0, "disabled": True}
     if not EMERGENT_KEY:
         raise HTTPException(status_code=503, detail="IA não configurada")
     if user["role"] != "aluno":
@@ -1686,6 +1723,216 @@ async def ai_daily_summary(user: dict = Depends(get_current_user)):
     except Exception as e:
         logger.error(f"AI daily-summary error: {e}")
         return {"summary": f"Você tem {len(my_tasks)} tarefa(s) pendente(s). Vamos nessa! 🚀", "count": len(my_tasks)}
+
+
+@api_router.get("/ai/monthly-report/{user_id}")
+async def ai_monthly_report(user_id: str, admin: dict = Depends(require_admin)):
+    """Admin-only: AI-generated monthly report per student.
+    Analyses tasks completion, points evolution, streak and gives personalized feedback.
+    """
+    await _ensure_ai_enabled()
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    student = await db.users.find_one({"id": user_id, "role": "aluno"}, {"_id": 0})
+    if not student:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    all_tasks = await db.tasks.find({}, {"_id": 0}).to_list(2000)
+    my_tasks = [t for t in all_tasks if not t.get("assigned_to") or user_id in (t.get("assigned_to") or [])]
+    completions = await db.completions.find({"user_id": user_id}, {"_id": 0}).to_list(2000)
+    completed_ids = {c["task_id"] for c in completions}
+    my_month_completions = [c for c in completions if c.get("completed_at", "") >= month_start.isoformat()]
+
+    total_assigned = len(my_tasks)
+    total_completed_ever = sum(1 for t in my_tasks if t["id"] in completed_ids)
+    pct = round((total_completed_ever / total_assigned * 100) if total_assigned else 0)
+    late = 0
+    on_time = 0
+    for c in my_month_completions:
+        t = next((x for x in my_tasks if x["id"] == c["task_id"]), None)
+        if not t or not t.get("due_date"):
+            continue
+        try:
+            if c.get("completed_at", "")[:10] <= t["due_date"]:
+                on_time += 1
+            else:
+                late += 1
+        except Exception:
+            pass
+
+    # Subjects breakdown
+    by_subject = {}
+    for t in my_tasks:
+        subj = t.get("subject", "-")
+        by_subject.setdefault(subj, {"total": 0, "done": 0})
+        by_subject[subj]["total"] += 1
+        if t["id"] in completed_ids:
+            by_subject[subj]["done"] += 1
+
+    system = (
+        "Você é um pedagogo experiente. Escreva um bilhete curto e sincero em português do Brasil, "
+        "dirigido aos pais do aluno, com base nos dados abaixo. Tom respeitoso, factual e construtivo. "
+        "3 parágrafos: (1) desempenho geral, (2) pontos fortes/matérias em destaque, (3) sugestões práticas. "
+        "Sem markdown pesado — texto corrido."
+    )
+    prompt = (
+        f"Aluno: {student['name']}\n"
+        f"Patente atual (pontos): {student.get('points', 0)}\n"
+        f"Sequência (streak): {student.get('streak', 0)} dias\n"
+        f"Tarefas do mês concluídas: {len(my_month_completions)} (no prazo: {on_time}, atrasadas: {late})\n"
+        f"Progresso geral: {total_completed_ever}/{total_assigned} tarefas concluídas ({pct}%)\n"
+        f"Por matéria: " + ", ".join([f"{s} {v['done']}/{v['total']}" for s, v in by_subject.items()]) +
+        "\n\nEscreva o bilhete agora."
+    )
+    try:
+        chat = _new_ai_chat(f"report-{user_id}-{now.strftime('%Y%m')}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        text = resp if isinstance(resp, str) else str(resp)
+        return {
+            "student": {"id": student["id"], "name": student["name"], "points": student.get("points", 0), "streak": student.get("streak", 0)},
+            "metrics": {
+                "total_assigned": total_assigned,
+                "total_completed": total_completed_ever,
+                "completion_pct": pct,
+                "month_completions": len(my_month_completions),
+                "on_time": on_time,
+                "late": late,
+                "by_subject": by_subject,
+            },
+            "report": text.strip(),
+            "generated_at": now.isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"AI monthly-report error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+
+@api_router.get("/ai/prize-tips")
+async def ai_prize_tips(user: dict = Depends(get_current_user)):
+    """Student-facing: AI analyses the leaderboard + user's stats and gives concrete
+    tips to improve chances of winning the monthly prize.
+    """
+    if not await _ai_enabled():
+        return {"tips": "IA desativada pelo administrador.", "disabled": True}
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    if user["role"] != "aluno":
+        raise HTTPException(status_code=403, detail="Somente alunos")
+
+    # Fetch prize + leaderboard
+    prize_doc = await db.settings.find_one({"id": "monthly_prize"}, {"_id": 0})
+    prize_title = prize_doc.get("title", "Prêmio do mês") if prize_doc else "Prêmio do mês"
+
+    students = await db.users.find({"role": "aluno", "status": "active"}, {"_id": 0}).to_list(500)
+    students_sorted = sorted(students, key=lambda s: (-s.get("points", 0), -s.get("streak", 0), s["name"]))
+    rank = next((i + 1 for i, s in enumerate(students_sorted) if s["id"] == user["id"]), len(students_sorted))
+    total = len(students_sorted)
+    my = next((s for s in students_sorted if s["id"] == user["id"]), None)
+    if not my:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    leader = students_sorted[0] if students_sorted else my
+    gap = max(0, leader.get("points", 0) - my.get("points", 0))
+
+    system = (
+        "Você é um coach motivador de estudos em português do Brasil. Fale direto com o aluno (você). "
+        "Seja específico, breve (3-5 frases), realista e amigável. Sem markdown."
+    )
+    prompt = (
+        f"O aluno {user['name']} está na posição {rank}º de {total} pelo prêmio \"{prize_title}\".\n"
+        f"Ele tem {my.get('points', 0)} pontos e {my.get('streak', 0)} dias de sequência.\n"
+        f"O líder tem {leader.get('points', 0)} pontos ({gap} de vantagem).\n"
+        "Dê 3 dicas ESPECÍFICAS e práticas para ele melhorar as chances de vencer neste mês. "
+        "Se ele já for líder, dê dicas para manter a liderança e superar recordes pessoais."
+    )
+    try:
+        chat = _new_ai_chat(f"prize-tips-{user['id']}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        text = resp if isinstance(resp, str) else str(resp)
+        return {
+            "rank": rank,
+            "total": total,
+            "gap_to_leader": gap,
+            "my_points": my.get("points", 0),
+            "leader_points": leader.get("points", 0),
+            "tips": text.strip(),
+        }
+    except Exception as e:
+        logger.error(f"AI prize-tips error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+
+@api_router.get("/ai/prize-evaluate")
+async def ai_prize_evaluate(admin: dict = Depends(require_admin)):
+    """Admin-only: AI evaluates the current leaderboard and suggests a winner
+    with justification, considering points, streak, consistency, and task completion.
+    """
+    await _ensure_ai_enabled()
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    prize_doc = await db.settings.find_one({"id": "monthly_prize"}, {"_id": 0})
+    prize_title = prize_doc.get("title", "Prêmio do mês") if prize_doc else "Prêmio do mês"
+
+    students = await db.users.find({"role": "aluno", "status": "active"}, {"_id": 0}).to_list(500)
+    if not students:
+        return {"suggestion": "Nenhum aluno cadastrado.", "candidates": []}
+    students_sorted = sorted(students, key=lambda s: (-s.get("points", 0), -s.get("streak", 0), s["name"]))
+    top = students_sorted[:10]
+
+    # Compute completion stats for top candidates
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    all_completions = await db.completions.find({}, {"_id": 0}).to_list(5000)
+    stats_per = {}
+    for c in all_completions:
+        stats_per.setdefault(c["user_id"], {"total": 0, "month": 0})
+        stats_per[c["user_id"]]["total"] += 1
+        if c.get("completed_at", "") >= month_start.isoformat():
+            stats_per[c["user_id"]]["month"] += 1
+
+    candidates_data = []
+    for s in top:
+        cs = stats_per.get(s["id"], {"total": 0, "month": 0})
+        candidates_data.append({
+            "id": s["id"], "name": s["name"], "points": s.get("points", 0),
+            "streak": s.get("streak", 0), "longest_streak": s.get("longest_streak", 0),
+            "total_completions": cs["total"], "month_completions": cs["month"],
+        })
+
+    system = (
+        "Você é um pedagogo justo escolhendo o vencedor mensal. Português do Brasil. "
+        "Analise pontos, sequência atual, sequência mais longa e completude no mês. "
+        "Responda APENAS em JSON válido: {\"winner_id\":\"...\",\"winner_name\":\"...\",\"justification\":\"...\",\"criteria\":[\"...\",\"...\"]}"
+    )
+    prompt = (
+        f"Prêmio: {prize_title}\n\nCandidatos (top 10):\n" +
+        "\n".join([
+            f"- {c['name']} (id={c['id']}): {c['points']} pts, streak {c['streak']} dias (recorde {c['longest_streak']}), "
+            f"tarefas concluídas: {c['total_completions']} (mês: {c['month_completions']})"
+            for c in candidates_data
+        ]) +
+        "\n\nEscolha o vencedor mais merecedor, justificando em 2-3 frases claras e listando 2-3 critérios usados."
+    )
+    try:
+        chat = _new_ai_chat(f"prize-eval-{now.strftime('%Y%m')}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        raw = _strip_json_fence(resp if isinstance(resp, str) else str(resp))
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = {"winner_id": candidates_data[0]["id"], "winner_name": candidates_data[0]["name"], "justification": raw, "criteria": []}
+        return {
+            "winner_id": data.get("winner_id") or candidates_data[0]["id"],
+            "winner_name": data.get("winner_name") or candidates_data[0]["name"],
+            "justification": (data.get("justification") or "").strip(),
+            "criteria": [c for c in (data.get("criteria") or []) if isinstance(c, str)][:5],
+            "candidates": candidates_data,
+        }
+    except Exception as e:
+        logger.error(f"AI prize-evaluate error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
 
 
 @api_router.put("/announcements/{ann_id}")

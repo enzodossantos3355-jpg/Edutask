@@ -11,6 +11,7 @@ import AnnouncementComments from "@/components/AnnouncementComments";
 import Avatar from "@/components/Avatar";
 import FirmwarePanel from "@/components/FirmwarePanel";
 import AIEnhanceButton from "@/components/AIEnhanceButton";
+import AIAdminPanel from "@/components/AIAdminPanel";
 import { getTier } from "@/lib/tiers";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
@@ -80,6 +81,13 @@ export default function AdminDashboard() {
           >
             <Cpu className="w-4 h-4 inline mr-1.5 sm:mr-2" /> Firmware
           </button>
+          <button
+            onClick={() => setTab("ai")}
+            className={`nb-btn px-3 sm:px-5 py-2 sm:py-2.5 text-sm ${tab === "ai" ? "bg-gradient-to-r from-violet-300 to-pink-300" : "bg-white"}`}
+            data-testid="tab-ai"
+          >
+            <Sparkles className="w-4 h-4 inline mr-1.5 sm:mr-2" /> IA
+          </button>
         </div>
         {tab === "tasks" && <TasksPanel />}
         {tab === "announcements" && <AnnouncementsPanel />}
@@ -88,6 +96,7 @@ export default function AdminDashboard() {
         {tab === "logs" && <LoginLogsPanel />}
         {tab === "stats" && <StatsPanel />}
         {tab === "firmware" && <FirmwarePanel />}
+        {tab === "ai" && <AIAdminPanel />}
       </div>
     </div>
   );
@@ -315,21 +324,22 @@ function FileLink({ file }) {
 }
 
 function TaskDialog({ task, onClose, onSaved }) {
-  const isEdit = Boolean(task);
-  const [subject, setSubject] = useState(task?.subject || "");
+  const [currentTask, setCurrentTask] = useState(task);
+  const isEdit = Boolean(currentTask);
+  const [subject, setSubject] = useState(currentTask?.subject || "");
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
-  const [assignedTo, setAssignedTo] = useState(task?.assigned_to || []);
-  const [title, setTitle] = useState(task?.title || "");
-  const [description, setDescription] = useState(task?.description || "");
-  const [dueDate, setDueDate] = useState(task?.due_date || "");
+  const [assignedTo, setAssignedTo] = useState(currentTask?.assigned_to || []);
+  const [title, setTitle] = useState(currentTask?.title || "");
+  const [description, setDescription] = useState(currentTask?.description || "");
+  const [dueDate, setDueDate] = useState(currentTask?.due_date || "");
   const [files, setFiles] = useState(
-    (task?.attachments || []).map((a) => ({ id: a.id, filename: a.original_filename }))
+    (currentTask?.attachments || []).map((a) => ({ id: a.id, filename: a.original_filename }))
   );
   const [adminPhotos, setAdminPhotos] = useState(
-    (task?.admin_photos || []).map((a) => ({ id: a.id, filename: a.original_filename }))
+    (currentTask?.admin_photos || []).map((a) => ({ id: a.id, filename: a.original_filename }))
   );
-  const [answer, setAnswer] = useState(task?.answer || "");
+  const [answer, setAnswer] = useState(currentTask?.answer || "");
   const [uploading, setUploading] = useState(false);
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
   const [generatingAnswer, setGeneratingAnswer] = useState(false);
@@ -396,7 +406,7 @@ function TaskDialog({ task, onClose, onSaved }) {
     // Save task first if new (need task_id for the AI endpoint)
     setGeneratingAnswer(true);
     try {
-      let currentTaskId = task?.id;
+      let currentTaskId = currentTask?.id;
       if (!currentTaskId) {
         // Save-and-reload as draft
         const { data } = await api.post("/tasks", {
@@ -407,6 +417,7 @@ function TaskDialog({ task, onClose, onSaved }) {
           assigned_to: assignedTo,
         });
         currentTaskId = data.id;
+        setCurrentTask({ ...data });
         toast.info("Rascunho salvo — gerando resposta...");
       } else {
         // Persist current photo list first
@@ -419,8 +430,7 @@ function TaskDialog({ task, onClose, onSaved }) {
       });
       setAnswer(gen.answer || "");
       toast.success(`Resposta gerada a partir de ${gen.photos_used} foto(s)! ✨`);
-      // If we created a draft, forward to onSaved to close as edit next
-      if (!task?.id) onSaved();
+      // Dialog stays open so admin can review and click "Salvar alterações"
     } catch (err) {
       toast.error(formatApiError(err?.response?.data?.detail) || "Falha ao gerar resposta");
     } finally {
@@ -439,8 +449,8 @@ function TaskDialog({ task, onClose, onSaved }) {
         answer,
         assigned_to: assignedTo,
       };
-      if (isEdit) {
-        await api.put(`/tasks/${task.id}`, payload);
+      if (currentTask?.id) {
+        await api.put(`/tasks/${currentTask.id}`, payload);
         toast.success("Tarefa atualizada!");
       } else {
         await api.post("/tasks", payload);

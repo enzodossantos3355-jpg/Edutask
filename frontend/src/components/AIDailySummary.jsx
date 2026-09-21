@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
 import api from "@/lib/api";
 import AIChatDialog from "@/components/AIChatDialog";
+import { useAIStatus } from "@/context/AIStatusContext";
 
 /**
  * Small AI banner shown on the student dashboard. Shows a 1-3 sentence daily
@@ -10,12 +11,14 @@ import AIChatDialog from "@/components/AIChatDialog";
 export default function AIDailySummary() {
   const [summary, setSummary] = useState(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const { enabled } = useAIStatus();
 
   useEffect(() => {
+    if (!enabled) return;
     api.get("/ai/daily-summary").then(({ data }) => setSummary(data)).catch(() => {});
-  }, []);
+  }, [enabled]);
 
-  if (!summary) return null;
+  if (!enabled || !summary) return null;
 
   return (
     <>

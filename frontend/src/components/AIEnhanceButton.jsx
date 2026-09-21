@@ -2,10 +2,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import api, { formatApiError } from "@/lib/api";
+import { useAIStatus } from "@/context/AIStatusContext";
 
 /**
  * Small "✨ Melhorar com IA" button. Calls a backend endpoint and passes result
- * back to parent via onResult(data). Shows loading state.
+ * back to parent via onResult(data). Shows loading state. Hidden if AI disabled.
  */
 export default function AIEnhanceButton({
   endpoint,
@@ -17,6 +18,8 @@ export default function AIEnhanceButton({
   testId,
 }) {
   const [loading, setLoading] = useState(false);
+  const { enabled } = useAIStatus();
+  if (!enabled) return null;
 
   const run = async () => {
     setLoading(true);
