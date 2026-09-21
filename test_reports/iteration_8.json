@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 8 — verified 3 bug fixes + 3 new AI features (kill-switch, monthly-report, prize-evaluate, prize-tips). Backend: 12/12 pytest tests pass (test_iter8_ai_admin_switch_and_reports.py) including due_date persistence (no timezone shift), /api/ai/status GET+PUT with admin/student RBAC, kill-switch blocking all AI endpoints with 503 (improve-task/generate-announcement/check-answer/explain-task/chat/generate-task-answer/monthly-report/prize-evaluate) plus safe fallback {disabled:true} on daily-summary + prize-tips, real Gemini calls for monthly-report (returns student+metrics+report>20 chars), prize-evaluate (winner_id/name/justification/criteria/candidates), prize-tips (rank/total/gap/points/tips). Frontend: admin sees new tab-ai; ai-admin-panel, ai-global-toggle-card, ai-toggle-button, ai-evaluate-prize-button all visible; monthly-report-card correctly gets 'opacity-60 pointer-events-none' when AI OFF; report-btn-* opens monthly-report-dialog with monthly-report-text (1532 chars real Gemini output) + copy-report-button; ai-evaluate-prize-button populates prize-eval-result with real winner + PT-BR justification. Student (Alice) sees prize-tips-button on PrizeBanner which opens prize-tips-panel with prize-tips-text (463 chars, coach-style output). Regression: ai-daily-summary + reveal-answer still work.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "features_verified": {
+    "GET /api/ai/status": "200 for admin+student; PUT admin toggles enabled bool; PUT student → 403",
+    "AI kill-switch": "When enabled=false, improve-task/generate-announcement/check-answer/explain-task/chat/generate-task-answer/monthly-report/prize-evaluate all return 503 with PT-BR message; daily-summary and prize-tips return 200 with {disabled:true} safe fallback (correct per spec)",
+    "GET /api/ai/monthly-report/{user_id}": "Admin-only. Returns {student, metrics:{total_assigned,total_completed,completion_pct,month_completions,on_time,late,by_subject}, report, generated_at}. Student → 403.",
+    "GET /api/ai/prize-evaluate": "Admin-only. Returns {winner_id, winner_name, justification, criteria[], candidates[]}. Student → 403. Handles empty student list gracefully with candidates=[].",
+    "GET /api/ai/prize-tips": "Student-only. Returns {rank, total, gap_to_leader, my_points, leader_points, tips}. Admin → 403.",
+    "BUG date shift": "POST /api/tasks with due_date '2026-10-15' → GET returns exactly '2026-10-15' (no -1 day). parseLocalDate implemented correctly in /app/frontend/src/lib/priority.js.",
+    "AI answer flow dialog stays open": "Verified via code review — currentTask state kept internally in TaskDialog; generate-answer-button populates task-answer-input without closing dialog (this iteration did not re-test full photo upload flow since it was verified in iter7).",
+    "Frontend AI admin panel": "tab-ai renders AIAdminPanel with ai-admin-panel + ai-global-toggle-card + ai-toggle-button + monthly-report-card + ai-evaluate-prize-button; toggle OFF greys out card via opacity/pointer-events; report-btn-* opens monthly-report-dialog with monthly-report-text + copy-report-button; ai-evaluate-prize-button loads prize-eval-result with real Gemini justification.",
+    "Frontend student PrizeBanner": "prize-tips-button visible when AI enabled + role=aluno; clicking opens prize-tips-panel with prize-tips-text populated by Gemini coach output."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter8_ai_admin_switch_and_reports.py",
+    "/app/test_reports/pytest/iter8_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 2127 lines — modularization becomes more urgent (auth/tasks/files/ai/cleanup routers).",
+    "/api/ai/check-answer is currently admin-only (require_admin at line 1442). Consider whether students should also self-check their answers; spec description in the request lists it among endpoints callable by students, but current implementation restricts to admin — behaviour is consistent, just worth confirming intent.",
+    "prize-evaluate returns 200 with shape {suggestion, candidates:[]} when there are no students, but the normal shape is {winner_id, winner_name, justification, criteria, candidates}. Frontend should defensively handle the empty branch (currently only reads justification/winner_name, which would be undefined).",
+    "AI kill-switch uses db.settings id='ai_config'; default when doc missing is True — good. Consider caching the flag for a few seconds to avoid a DB call per AI request under load.",
+    "Timezone: due_date is stored as ISO date-only string, so a UTC parse in the browser was the culprit. Fix using parseLocalDate is correct. Ensure no other component still passes due_date directly to `new Date()`."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter8_ai_admin_switch_and_reports.py (new)"
+  ],
+  "success_rate": {"backend": "100% (12/12 pytest)", "frontend": "100% (all new testids present and functional; real Gemini responses verified)"},
+  "test_credentials": "Admin: admin@escola.com / enzo123cg. Student Alice: password 'alice1' (fetched from /api/users). Pedro is BLOQUEADO.",
+  "seed_data_creation": "Each backend test creates a TEST_iter8_ student, uses it, then deletes in teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To rerun: `REACT_APP_BACKEND_URL=... pytest /app/backend/tests/test_iter8_ai_admin_switch_and_reports.py -v`. The autouse _ai_reset fixture forces AI ON before/after every test, so tests are safe to interleave with iter7 AI tests. Real Gemini calls take 5-25s each — timeouts set to 90s.",
+  "rca of the issue": "Date -1 day: due_date is a date-only ISO string (YYYY-MM-DD); passing it to `new Date()` in JS treats it as UTC midnight, which becomes previous-day in UTC-3. Fix: parseLocalDate constructs Date(y, m-1, d) at LOCAL midnight. Verified backend never shifts dates (stored/returned verbatim)."
+}
