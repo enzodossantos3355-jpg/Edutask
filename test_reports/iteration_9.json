@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 9 — verified AI answer refinement (concise Q/Contas/Resposta format, no markdown ** or verbose 'passo a passo') + student reveal/hide toggle. Backend: 4/4 pytest tests pass (test_iter9_ai_answer_format.py). Frontend: reveal-answer-{tid} → hide-answer-{tid} → reveal cycle works, answer displays cleanly with preserved newlines.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "features_verified": {
+    "_clean_answer_text unit": "Strips **bold**, __bold__, headings #, bullet asterisks; preserves math '3 * 5' between digits; preserves multi-line",
+    "POST /api/ai/generate-task-answer (real Gemini + photo)": "Response has no '**', no '__', no 'passo a passo', no 'raciocínio', no 'identificação da operação'; contains 'Resposta' (case-insensitive). photos_used>=1",
+    "Kill-switch": "PUT /api/ai/status enabled=false → POST generate-task-answer returns 503",
+    "Regression AI other endpoints ON": "GET /api/ai/monthly-report/{uid} 200 (admin); /api/ai/prize-evaluate 200 (admin); /api/ai/prize-tips 200 (student)",
+    "Frontend StudentAnswerReveal": "reveal-answer-{tid} visible; click reveals answer-{tid} + hide-answer-{tid}; click hide collapses back; reveal→hide→reveal cycle works; whitespace-pre-wrap preserves 'Questão 1: 2+3 / Contas: 2+3=5 / Resposta: 5' on separate lines"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter9_ai_answer_format.py",
+    "/app/test_reports/pytest/iter9_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_clean_answer_text italic-strip regex uses lookarounds ((?<![\\w\\d])\\*...\\*(?![\\w\\d])) — correctly preserves '3 * 5' but would strip standalone '*text*'. Behavior verified in unit tests.",
+    "generate-task-answer post-processes text — good defense in depth, but relies on model following the terse prompt. Real Gemini output in test was compliant, but variation across runs is possible; consider extra heuristic like truncating at first 'Observação'/'Dica' marker if model regresses.",
+    "server.py now at 2165 lines — still growing. Modularization increasingly urgent.",
+    "StudentAnswerReveal correctly uses local useState — no leak, no server round-trip needed for toggle."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter9_ai_answer_format.py (new)"
+  ],
+  "success_rate": {"backend": "100% (4/4 pytest)", "frontend": "100% (reveal/hide/re-reveal + content verified)"},
+  "test_credentials": "Admin: admin@escola.com / enzo123cg. Test student created per-run and deleted.",
+  "seed_data_creation": "TEST_iter9_stu_* users and TEST_iter9_* tasks created and cleaned up by fixtures.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Rerun: `pytest /app/backend/tests/test_iter9_ai_answer_format.py -v`. autouse _ai_reset fixture keeps AI ON. Real Gemini call in test_generate_task_answer_format_no_markdown_no_verbose can take 15-30s (timeout 90s, 1 retry). NOTE: from the container's Python urllib the API is blocked by Cloudflare (error 1010) — use `curl` from bash or `page.context.request` inside Playwright to reach the public URL; pytest via `requests` module works fine because it uses a browser-like User-Agent.",
+  "rca of the issue": "User complained AI answer was verbose with markdown ** and had headings like 'Raciocínio' / 'Passo a Passo'. Root cause: previous system prompt asked for a structured explanation. Fix in server.py: new system prompt explicitly demands terse 'Questão N / [Contas] / Resposta' format with no markdown, plus _clean_answer_text post-processing that strips ** __ headings and bullet stars while preserving math and newlines. Frontend missing close button: added hide-answer-{taskId} inside StudentAnswerReveal expanded panel — verified working."
+}
