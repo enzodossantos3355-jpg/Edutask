@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 7 - Comprehensive testing of new AI features (Gemini 3 Flash + Vision). Backend: 14/14 tests pass including real Gemini calls (improve-task, generate-announcement, check-answer, explain-task, chat multi-turn context retention, daily-summary, generate-task-answer with vision). Frontend: verified admin TaskDialog exposes all new testids (task-photo-upload-zone, generate-answer-button, task-answer-input, ai-improve-task-button), ai-improve-task-button fills description with 2+ paragraph PT-BR content, generate-answer-button is properly disabled until photos added (client-side validation). Student dashboard: reveal-answer-{id} expands to show answer content, ai-daily-summary + ai-summary-text render with real Gemini output, open-ai-chat button present. Task visibility rules verified: admin sees admin_photos (file meta) + answer; students never see admin_photos, always see answer. Security: /api/ai/generate-task-answer returns 403 for students; /api/ai/daily-summary returns 403 for admin.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "ai_features_verified": {
+    "POST /api/ai/improve-task": "200 - returns {description, tips[], objectives[]} in PT-BR (admin-only, 403 for student)",
+    "POST /api/ai/generate-announcement": "200 - returns {title, message}",
+    "POST /api/ai/check-answer": "200 - returns {score, errors[], feedback, suggestions[]}",
+    "POST /api/ai/explain-task": "200 - returns {explanation, key_concepts, tips, first_step}; assignment scoping works",
+    "POST /api/ai/chat multi-turn": "Session context retained across turns (LLM correctly recalls 'Marina' name from previous message). GET history returns messages, DELETE clears them.",
+    "GET /api/ai/daily-summary": "200 for student with real summary; 403 for admin",
+    "POST /api/ai/generate-task-answer": "400 when task has 0 photos; 200 with non-empty answer + photos_used>=1 after PNG upload + PUT admin_photos; 403 for student",
+    "Task model": "POST/PUT accept admin_photos + answer; GET strips admin_photos for student, keeps for admin; answer visible to both"
+  },
+  "frontend_ui_verified": {
+    "admin TaskDialog": "task-photo-upload-zone, task-photo-input, generate-answer-button (disabled without photos - correct), task-answer-input, ai-improve-task-button all present with correct data-testid",
+    "ai-improve-task-button": "Clicking it filled the description textarea with a full 2-paragraph PT-BR explanation of the topic",
+    "ai-generate-announcement-button": "Present in AnnouncementDialog with correct data-testid",
+    "student dashboard AIDailySummary": "ai-daily-summary + ai-summary-text render with real Gemini text; open-ai-chat button present",
+    "student reveal-answer": "reveal-answer-{taskId} button toggles answer-{taskId} panel showing the answer content"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter7_ai_features.py",
+    "/app/test_reports/pytest/iter7_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 1880 lines - strong recommendation to modularize (ai.py, tasks.py, files.py, auth.py, cleanup.py). AI section alone is ~400 lines.",
+    "/api/ai/chat replays prior user messages via send_message in a loop to rebuild context (line 1605). This works but doubles Gemini cost/latency for long sessions. Consider using the library's history import API if available, or storing/sending compact context instead of re-sending each turn.",
+    "AI JSON parsing has a graceful fallback (returns raw text as description) but the fallback path uses `raw` variable that is only defined inside the try block; if send_message itself raises, it goes to generic 502 handler which is fine but `raw` reference could NameError in JSONDecodeError branch if raw wasn't assigned - currently safe because raw is set right before json.loads. OK.",
+    "generate-task-answer caps at 8 images (line 1466) - not documented in API; consider surfacing a validation error if more are supplied instead of silent truncation."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter7_ai_features.py (new)"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (all AI testids present + functional)"},
+  "test_credentials": "admin@escola.com / enzo123cg (from /app/memory/test_credentials.md). Test students created and cleaned per test.",
+  "seed_data_creation": "Each test creates its own TEST_ prefixed students/tasks and deletes them in the finally block.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "AI feature set is fully functional end-to-end with real Gemini 3 Flash calls. EMERGENT_LLM_KEY is fresh. AI calls take 3-30s each - use timeouts >=60s. To reuse: run `pytest /app/backend/tests/test_iter7_ai_features.py -v` for full AI regression. Iteration 6 tests remain valid for non-AI regression."
+}
