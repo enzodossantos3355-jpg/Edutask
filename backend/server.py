@@ -12,6 +12,8 @@ import bcrypt
 import jwt
 import requests
 import httpx
+import json
+import base64
 from datetime import datetime, timezone, timedelta, time as dtime
 from zoneinfo import ZoneInfo
 from typing import List, Optional
@@ -20,6 +22,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from fastapi.responses import Response as FastResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from pydantic import BaseModel, EmailStr, Field
 
 # ---------------------------------------------------------------------------
@@ -179,6 +182,8 @@ class TaskCreate(BaseModel):
     due_date: str  # ISO date
     attachments: List[str] = []  # list of file ids
     assigned_to: List[str] = []  # list of student ids; empty = all students
+    admin_photos: List[str] = []  # file ids visible only to admin (used by AI to generate answer)
+    answer: Optional[str] = ""    # generated/edited answer visible to students
 
 
 class TaskUpdate(BaseModel):
@@ -188,6 +193,8 @@ class TaskUpdate(BaseModel):
     due_date: Optional[str] = None
     attachments: Optional[List[str]] = None
     assigned_to: Optional[List[str]] = None
+    admin_photos: Optional[List[str]] = None
+    answer: Optional[str] = None
 
 
 class AnnouncementCreate(BaseModel):
@@ -729,13 +736,19 @@ async def download_file(file_id: str, request: Request, auth: Optional[str] = Qu
 # ---------------------------------------------------------------------------
 # Tasks
 # ---------------------------------------------------------------------------
-async def _build_task_response(task: dict, students: list, completions_by_task: dict) -> dict:
+async def _build_task_response(task: dict, students: list, completions_by_task: dict, is_admin: bool = False) -> dict:
     """Attach attachment metadata + completion progress to a task."""
     file_ids = task.get("attachments", []) or []
     files = []
     if file_ids:
         cursor = db.files.find({"id": {"$in": file_ids}, "is_deleted": False}, {"_id": 0, "id": 1, "original_filename": 1, "size": 1, "content_type": 1})
         files = await cursor.to_list(100)
+    admin_photos_meta = []
+    if is_admin:
+        admin_photo_ids = task.get("admin_photos", []) or []
+        if admin_photo_ids:
+            cursor = db.files.find({"id": {"$in": admin_photo_ids}, "is_deleted": False}, {"_id": 0, "id": 1, "original_filename": 1, "size": 1, "content_type": 1})
+            admin_photos_meta = await cursor.to_list(100)
     task_completions = completions_by_task.get(task["id"], [])
     completed_user_ids = {c["user_id"] for c in task_completions}
     assigned_to = task.get("assigned_to", []) or []
@@ -748,7 +761,7 @@ async def _build_task_response(task: dict, students: list, completions_by_task: 
             "completed": s["id"] in completed_user_ids,
             "completed_at": next((c["completed_at"] for c in task_completions if c["user_id"] == s["id"]), None),
         })
-    return {
+    result = {
         **task,
         "attachments": files,
         "progress": progress,
@@ -756,6 +769,12 @@ async def _build_task_response(task: dict, students: list, completions_by_task: 
         "total_students": len(target_students),
         "all_students": not assigned_to,
     }
+    if is_admin:
+        result["admin_photos"] = admin_photos_meta
+    else:
+        # strip admin-only fields for students
+        result.pop("admin_photos", None)
+    return result
 
 
 @api_router.post("/tasks")
@@ -769,6 +788,8 @@ async def create_task(payload: TaskCreate, user: dict = Depends(require_admin)):
         "due_date": payload.due_date,
         "attachments": payload.attachments,
         "assigned_to": payload.assigned_to,  # [] = all students
+        "admin_photos": payload.admin_photos or [],
+        "answer": (payload.answer or "").strip(),
         "created_by": user["id"],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -799,7 +820,7 @@ async def list_tasks(user: dict = Depends(get_current_user)):
         completions_by_task.setdefault(c["task_id"], []).append(c)
 
     if user["role"] == "admin":
-        return [await _build_task_response(t, students, completions_by_task) for t in tasks]
+        return [await _build_task_response(t, students, completions_by_task, is_admin=True) for t in tasks]
 
     # Aluno: filter by assignment + include their own completion state
     my_completed = {c["task_id"] for c in completions if c["user_id"] == user["id"]}
@@ -815,12 +836,15 @@ async def list_tasks(user: dict = Depends(get_current_user)):
             cursor = db.files.find({"id": {"$in": file_ids}, "is_deleted": False}, {"_id": 0, "id": 1, "original_filename": 1, "size": 1, "content_type": 1})
             files = await cursor.to_list(100)
         my_completion = next((c for c in completions if c["task_id"] == t["id"] and c["user_id"] == user["id"]), None)
-        result.append({
+        student_task = {
             **t,
             "attachments": files,
             "completed": t["id"] in my_completed,
             "completed_at": my_completion["completed_at"] if my_completion else None,
-        })
+        }
+        # Strip admin-only fields
+        student_task.pop("admin_photos", None)
+        result.append(student_task)
     return result
 
 
@@ -1244,6 +1268,424 @@ async def test_webhook(_: dict = Depends(require_admin)):
         return {"ok": True, "status": resp.status_code}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha: {e}")
+
+
+# ---------------------------------------------------------------------------
+# AI (Gemini 3 Flash)
+# ---------------------------------------------------------------------------
+AI_MODEL = "gemini-3-flash-preview"
+AI_PROVIDER = "gemini"
+
+
+def _new_ai_chat(session_id: str, system_message: str) -> LlmChat:
+    """Fresh LlmChat instance per request (session-scoped)."""
+    return LlmChat(
+        api_key=EMERGENT_KEY,
+        session_id=session_id,
+        system_message=system_message,
+    ).with_model(AI_PROVIDER, AI_MODEL)
+
+
+class AIImproveTaskIn(BaseModel):
+    title: str
+    subject: Optional[str] = ""
+    hint: Optional[str] = ""
+
+
+class AIGenAnnouncementIn(BaseModel):
+    prompt: str
+
+
+class AICheckAnswerIn(BaseModel):
+    task_title: str
+    task_description: str
+    student_answer: str
+
+
+class AIGenTaskAnswerIn(BaseModel):
+    task_id: str
+    extra_hint: Optional[str] = ""
+
+
+class AIExplainTaskIn(BaseModel):
+    task_id: str
+
+
+class AIChatIn(BaseModel):
+    session_id: Optional[str] = None
+    message: str
+    task_id: Optional[str] = None  # optional context: helps student solve this task
+
+
+def _strip_json_fence(text: str) -> str:
+    """LLM sometimes wraps JSON in ```json ... ``` fences."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        # remove leading fence
+        first_newline = t.find("\n")
+        if first_newline > 0:
+            t = t[first_newline + 1:]
+        if t.endswith("```"):
+            t = t[:-3]
+    return t.strip()
+
+
+@api_router.post("/ai/improve-task")
+async def ai_improve_task(payload: AIImproveTaskIn, admin: dict = Depends(require_admin)):
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Título obrigatório")
+    subject = (payload.subject or "").strip() or "matéria não informada"
+    hint = (payload.hint or "").strip()
+    system = (
+        "Você é um professor experiente do ensino fundamental/médio no Brasil. "
+        "Responda SEMPRE em português do Brasil. Use linguagem clara, amigável e adequada a alunos. "
+        "Responda EXCLUSIVAMENTE em JSON válido, sem texto extra fora do JSON, sem cercas de código."
+    )
+    prompt = (
+        f"Elabore uma tarefa escolar com base nas informações abaixo.\n\n"
+        f"Matéria: {subject}\n"
+        f"Título da tarefa: {title}\n"
+        + (f"Ideias/observações do professor: {hint}\n" if hint else "")
+        + "\nRetorne um JSON com as chaves:\n"
+        "- \"description\" (string, 2-4 parágrafos explicando a tarefa)\n"
+        "- \"tips\" (array de 3-5 dicas curtas para os alunos)\n"
+        "- \"objectives\" (array de 2-3 objetivos de aprendizagem)\n"
+        "Exemplo: {\"description\":\"...\",\"tips\":[\"...\",\"...\"],\"objectives\":[\"...\"]}"
+    )
+    try:
+        chat = _new_ai_chat(f"improve-{admin['id']}-{uuid.uuid4().hex[:8]}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        raw = _strip_json_fence(resp if isinstance(resp, str) else str(resp))
+        data = json.loads(raw)
+        return {
+            "description": data.get("description", "").strip(),
+            "tips": [t for t in (data.get("tips") or []) if isinstance(t, str)][:5],
+            "objectives": [o for o in (data.get("objectives") or []) if isinstance(o, str)][:3],
+        }
+    except json.JSONDecodeError:
+        # Fallback: return raw text as description
+        return {"description": raw, "tips": [], "objectives": []}
+    except Exception as e:
+        logger.error(f"AI improve-task error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+
+@api_router.post("/ai/generate-announcement")
+async def ai_generate_announcement(payload: AIGenAnnouncementIn, admin: dict = Depends(require_admin)):
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    prompt_text = payload.prompt.strip()
+    if not prompt_text:
+        raise HTTPException(status_code=400, detail="Descreva o aviso")
+    system = (
+        "Você é um professor redigindo avisos escolares em português do Brasil. "
+        "Tom amigável, respeitoso e claro. Responda APENAS em JSON válido, sem texto extra."
+    )
+    prompt = (
+        f"Com base nesta ideia curta, escreva um aviso escolar completo:\n\n\"{prompt_text}\"\n\n"
+        "Retorne JSON com as chaves:\n"
+        "- \"title\" (string, até 60 caracteres)\n"
+        "- \"message\" (string, 1-3 parágrafos)\n"
+        "Exemplo: {\"title\":\"Reunião de pais\",\"message\":\"...\"}"
+    )
+    try:
+        chat = _new_ai_chat(f"ann-{admin['id']}-{uuid.uuid4().hex[:8]}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        raw = _strip_json_fence(resp if isinstance(resp, str) else str(resp))
+        data = json.loads(raw)
+        return {
+            "title": (data.get("title") or "").strip()[:120],
+            "message": (data.get("message") or "").strip(),
+        }
+    except json.JSONDecodeError:
+        return {"title": "Aviso", "message": raw}
+    except Exception as e:
+        logger.error(f"AI generate-announcement error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+
+@api_router.post("/ai/check-answer")
+async def ai_check_answer(payload: AICheckAnswerIn, admin: dict = Depends(require_admin)):
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    answer = payload.student_answer.strip()
+    if not answer:
+        raise HTTPException(status_code=400, detail="Resposta vazia")
+    system = (
+        "Você é um professor corrigindo a resposta de um aluno. Português do Brasil. "
+        "Aponte erros com empatia. Sugira feedback construtivo. Responda APENAS em JSON válido."
+    )
+    prompt = (
+        f"Tarefa: {payload.task_title}\n"
+        f"Enunciado: {payload.task_description}\n\n"
+        f"Resposta do aluno:\n\"\"\"\n{answer}\n\"\"\"\n\n"
+        "Retorne JSON com:\n"
+        "- \"score\" (número de 0 a 10)\n"
+        "- \"errors\" (array de strings apontando erros específicos, vazio se não houver)\n"
+        "- \"feedback\" (string, mensagem construtiva de 1-2 parágrafos para enviar ao aluno)\n"
+        "- \"suggestions\" (array de 2-3 sugestões de melhoria)"
+    )
+    try:
+        chat = _new_ai_chat(f"check-{admin['id']}-{uuid.uuid4().hex[:8]}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        raw = _strip_json_fence(resp if isinstance(resp, str) else str(resp))
+        data = json.loads(raw)
+        return {
+            "score": float(data.get("score", 0)),
+            "errors": [e for e in (data.get("errors") or []) if isinstance(e, str)][:6],
+            "feedback": (data.get("feedback") or "").strip(),
+            "suggestions": [s for s in (data.get("suggestions") or []) if isinstance(s, str)][:4],
+        }
+    except json.JSONDecodeError:
+        return {"score": 0, "errors": [], "feedback": raw, "suggestions": []}
+    except Exception as e:
+        logger.error(f"AI check-answer error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+
+@api_router.post("/ai/generate-task-answer")
+async def ai_generate_task_answer(payload: AIGenTaskAnswerIn, admin: dict = Depends(require_admin)):
+    """Admin-only: uses the task's admin_photos as visual input to generate a complete
+    answer/solution for the task. Returns the answer as plain text — admin can then
+    review/edit and save it back to the task via PUT /api/tasks/{id}.
+    """
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    task = await db.tasks.find_one({"id": payload.task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    photo_ids = task.get("admin_photos", []) or []
+    if not photo_ids:
+        raise HTTPException(status_code=400, detail="Adicione ao menos uma foto da tarefa antes de gerar a resposta")
+
+    # Fetch photos as base64 image contents
+    image_contents: List[ImageContent] = []
+    for pid in photo_ids[:8]:  # cap to 8 images
+        f = await db.files.find_one({"id": pid, "is_deleted": False}, {"_id": 0})
+        if not f:
+            continue
+        ct = (f.get("content_type") or "").lower()
+        if not ct.startswith("image/"):
+            continue
+        try:
+            content, _ct = get_object(f["storage_path"])
+            b64 = base64.b64encode(content).decode()
+            image_contents.append(ImageContent(image_base64=b64))
+        except Exception as e:
+            logger.warning(f"Could not load photo {pid} for AI: {e}")
+    if not image_contents:
+        raise HTTPException(status_code=400, detail="Nenhuma foto válida encontrada. Envie imagens (jpg/png).")
+
+    system = (
+        "Você é um professor experiente resolvendo uma tarefa escolar para servir de gabarito. "
+        "Português do Brasil. Analise as fotos com atenção. Resolva TODOS os exercícios/questões "
+        "que aparecem, mostrando o raciocínio passo a passo. Seja claro, organizado e correto. "
+        "Formate a resposta com marcadores/numeração quando apropriado. Não use JSON — devolva texto simples."
+    )
+    hint = (payload.extra_hint or "").strip()
+    prompt = (
+        f"Matéria: {task.get('subject','')}\n"
+        f"Título: {task.get('title','')}\n"
+        f"Enunciado: {task.get('description','')}\n"
+        + (f"Observações extras do professor: {hint}\n" if hint else "")
+        + "\nAnalise as fotos anexadas e produza um GABARITO COMPLETO com a resolução de cada questão. "
+        "Se houver ambiguidade, resolva a interpretação mais provável e sinalize."
+    )
+    try:
+        chat = _new_ai_chat(f"gen-answer-{admin['id']}-{payload.task_id}", system)
+        resp = await chat.send_message(UserMessage(text=prompt, file_contents=image_contents))
+        text = resp if isinstance(resp, str) else str(resp)
+        return {"answer": text.strip(), "photos_used": len(image_contents)}
+    except Exception as e:
+        logger.error(f"AI generate-task-answer error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+
+@api_router.post("/ai/explain-task")
+async def ai_explain_task(payload: AIExplainTaskIn, user: dict = Depends(get_current_user)):
+    """Student-facing: explains what the task is asking without giving the answer."""
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    task = await db.tasks.find_one({"id": payload.task_id}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    # Ensure student can access this task
+    if user["role"] == "aluno":
+        assigned = task.get("assigned_to", []) or []
+        if assigned and user["id"] not in assigned:
+            raise HTTPException(status_code=403, detail="Sem acesso a essa tarefa")
+    system = (
+        "Você é um professor paciente ajudando um aluno a entender o que uma tarefa está pedindo. "
+        "Português do Brasil, tom amigável, linguagem simples. "
+        "NUNCA entregue a resposta pronta — sua função é EXPLICAR o que deve ser feito, dar dicas e conceitos-chave. "
+        "Responda APENAS em JSON válido, sem texto extra."
+    )
+    prompt = (
+        f"Matéria: {task.get('subject','')}\n"
+        f"Título: {task.get('title','')}\n"
+        f"Enunciado: {task.get('description','')}\n\n"
+        "Retorne JSON com:\n"
+        "- \"explanation\" (string, 2-3 parágrafos explicando com suas próprias palavras o que a tarefa pede)\n"
+        "- \"key_concepts\" (array de 2-4 conceitos que o aluno precisa dominar)\n"
+        "- \"tips\" (array de 2-4 dicas para começar SEM entregar a resposta)\n"
+        "- \"first_step\" (string, o primeiro passinho pra o aluno começar)"
+    )
+    try:
+        chat = _new_ai_chat(f"explain-{user['id']}-{payload.task_id}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        raw = _strip_json_fence(resp if isinstance(resp, str) else str(resp))
+        data = json.loads(raw)
+        return {
+            "explanation": (data.get("explanation") or "").strip(),
+            "key_concepts": [c for c in (data.get("key_concepts") or []) if isinstance(c, str)][:5],
+            "tips": [t for t in (data.get("tips") or []) if isinstance(t, str)][:5],
+            "first_step": (data.get("first_step") or "").strip(),
+        }
+    except json.JSONDecodeError:
+        return {"explanation": raw, "key_concepts": [], "tips": [], "first_step": ""}
+    except Exception as e:
+        logger.error(f"AI explain-task error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+
+@api_router.post("/ai/chat")
+async def ai_chat(payload: AIChatIn, user: dict = Depends(get_current_user)):
+    """Multi-turn tutor chat. Optional task_id to bind the session to a task's context.
+
+    Sessions are stored in db.ai_chats (one doc per session).
+    Each POST appends user+assistant messages and returns the assistant reply.
+    """
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    text = payload.message.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Mensagem vazia")
+    if len(text) > 1000:
+        raise HTTPException(status_code=400, detail="Mensagem muito longa (máx 1000 caracteres)")
+
+    session_id = payload.session_id or f"sess-{user['id']}-{uuid.uuid4().hex[:10]}"
+    task_ctx = ""
+    if payload.task_id:
+        task = await db.tasks.find_one({"id": payload.task_id}, {"_id": 0})
+        if task:
+            task_ctx = (
+                f"\n\nCONTEXTO DA TAREFA:\n"
+                f"Matéria: {task.get('subject','')}\n"
+                f"Título: {task.get('title','')}\n"
+                f"Enunciado: {task.get('description','')}\n"
+            )
+    if user["role"] == "aluno":
+        system = (
+            "Você é um tutor amigável em português do Brasil. Ajude o aluno a APRENDER — nunca entregue "
+            "respostas prontas de tarefas; guie com perguntas, dicas e explicações. Seja breve (até 4 parágrafos). "
+            "Use exemplos claros e adequados à faixa etária escolar."
+            + task_ctx
+        )
+    else:
+        system = (
+            "Você é um assistente pedagógico para o professor. Português do Brasil. Ajude com ideias, "
+            "correções, planos de aula. Seja objetivo (até 4 parágrafos)."
+            + task_ctx
+        )
+
+    # Load existing session (if any) — restore history via new chat + replay
+    session_doc = await db.ai_chats.find_one({"id": session_id, "user_id": user["id"]}, {"_id": 0})
+    history = session_doc.get("messages", []) if session_doc else []
+
+    # Build a fresh LlmChat and replay history by sending previous user messages
+    # (library maintains its own history from send_message calls in this instance).
+    chat = _new_ai_chat(session_id, system)
+    # Replay: send all prior user messages so the library re-computes assistant history.
+    # This is a simple approach; for heavier use, migrate to library's message import when available.
+    # NOTE: we cache the last N=20 turns only to keep prompt size manageable.
+    prior_user_msgs = [m["content"] for m in history if m.get("role") == "user"][-20:]
+    for prev in prior_user_msgs:
+        try:
+            await chat.send_message(UserMessage(text=prev))
+        except Exception:
+            pass  # tolerate; continue with fresh call below
+
+    try:
+        resp = await chat.send_message(UserMessage(text=text))
+        answer = resp if isinstance(resp, str) else str(resp)
+    except Exception as e:
+        logger.error(f"AI chat error: {e}")
+        raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    history.append({"role": "user", "content": text, "ts": now})
+    history.append({"role": "assistant", "content": answer, "ts": now})
+
+    await db.ai_chats.update_one(
+        {"id": session_id, "user_id": user["id"]},
+        {"$set": {
+            "id": session_id,
+            "user_id": user["id"],
+            "task_id": payload.task_id,
+            "kind": "task_help" if payload.task_id else "free",
+            "messages": history[-60:],  # keep last 60 msgs
+            "updated_at": now,
+        }, "$setOnInsert": {"created_at": now}},
+        upsert=True,
+    )
+    return {"session_id": session_id, "message": answer, "history_len": len(history)}
+
+
+@api_router.get("/ai/chat/{session_id}")
+async def ai_chat_history(session_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.ai_chats.find_one({"id": session_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        return {"session_id": session_id, "messages": []}
+    return {"session_id": session_id, "messages": doc.get("messages", []), "task_id": doc.get("task_id")}
+
+
+@api_router.delete("/ai/chat/{session_id}")
+async def ai_chat_delete(session_id: str, user: dict = Depends(get_current_user)):
+    await db.ai_chats.delete_one({"id": session_id, "user_id": user["id"]})
+    return {"ok": True}
+
+
+@api_router.get("/ai/daily-summary")
+async def ai_daily_summary(user: dict = Depends(get_current_user)):
+    """Short personalized summary of the student's pending tasks for today."""
+    if not EMERGENT_KEY:
+        raise HTTPException(status_code=503, detail="IA não configurada")
+    if user["role"] != "aluno":
+        raise HTTPException(status_code=403, detail="Somente alunos")
+    # Pull student's assigned open tasks
+    tasks = await db.tasks.find({}, {"_id": 0}).to_list(1000)
+    my_tasks = []
+    completed = await db.completions.find({"user_id": user["id"]}, {"_id": 0}).to_list(1000)
+    completed_ids = {c["task_id"] for c in completed}
+    for t in tasks:
+        assigned = t.get("assigned_to", []) or []
+        if assigned and user["id"] not in assigned:
+            continue
+        if t["id"] in completed_ids:
+            continue
+        my_tasks.append(t)
+    if not my_tasks:
+        return {"summary": "Você está em dia! Nenhuma tarefa pendente. 🎉", "count": 0}
+    task_list = "\n".join([f"- {t['subject']}: {t['title']} (entrega {t.get('due_date','')})" for t in my_tasks[:10]])
+    system = (
+        "Você é um coach amigável de estudos em português do Brasil. Seja breve (2-3 frases), motivador, "
+        "e sugira uma ordem prática. Sem formatação markdown."
+    )
+    prompt = (
+        f"O aluno {user['name']} tem {len(my_tasks)} tarefa(s) pendente(s):\n{task_list}\n\n"
+        "Escreva um resumo curto e amigável (máx. 3 frases) indicando por onde começar e uma frase de motivação."
+    )
+    try:
+        chat = _new_ai_chat(f"summary-{user['id']}-{datetime.now(timezone.utc).date().isoformat()}", system)
+        resp = await chat.send_message(UserMessage(text=prompt))
+        text = resp if isinstance(resp, str) else str(resp)
+        return {"summary": text.strip(), "count": len(my_tasks)}
+    except Exception as e:
+        logger.error(f"AI daily-summary error: {e}")
+        return {"summary": f"Você tem {len(my_tasks)} tarefa(s) pendente(s). Vamos nessa! 🚀", "count": len(my_tasks)}
 
 
 @api_router.put("/announcements/{ann_id}")

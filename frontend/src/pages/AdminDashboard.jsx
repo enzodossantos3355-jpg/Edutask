@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3, Trophy, Minus, Cpu } from "lucide-react";
+import { Plus, Calendar as CalendarIcon, Trash2, Users, ListTodo, Paperclip, X, CheckCircle2, Circle, Upload, Eye, EyeOff, BookMarked, Wrench, Lock, CheckCircle, Megaphone, Pencil, Copy, History, BarChart3, Trophy, Minus, Cpu, Sparkles } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import RecipientSelector from "@/components/RecipientSelector";
@@ -10,6 +10,7 @@ import EditProfileDialog from "@/components/EditProfileDialog";
 import AnnouncementComments from "@/components/AnnouncementComments";
 import Avatar from "@/components/Avatar";
 import FirmwarePanel from "@/components/FirmwarePanel";
+import AIEnhanceButton from "@/components/AIEnhanceButton";
 import { getTier } from "@/lib/tiers";
 import { getPriority, formatDateBR } from "@/lib/priority";
 
@@ -325,7 +326,13 @@ function TaskDialog({ task, onClose, onSaved }) {
   const [files, setFiles] = useState(
     (task?.attachments || []).map((a) => ({ id: a.id, filename: a.original_filename }))
   );
+  const [adminPhotos, setAdminPhotos] = useState(
+    (task?.admin_photos || []).map((a) => ({ id: a.id, filename: a.original_filename }))
+  );
+  const [answer, setAnswer] = useState(task?.answer || "");
   const [uploading, setUploading] = useState(false);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [generatingAnswer, setGeneratingAnswer] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -359,6 +366,68 @@ function TaskDialog({ task, onClose, onSaved }) {
     }
   };
 
+  const handlePhotoUpload = async (e) => {
+    const list = Array.from(e.target.files || []);
+    if (list.length === 0) return;
+    setUploadingPhotos(true);
+    try {
+      for (const f of list) {
+        if (!f.type.startsWith("image/")) {
+          toast.error(`${f.name} não é imagem`);
+          continue;
+        }
+        const fd = new FormData();
+        fd.append("file", f);
+        const { data } = await api.post("/files/upload", fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+        setAdminPhotos((prev) => [...prev, data]);
+      }
+      toast.success("Foto adicionada");
+    } catch (err) {
+      toast.error(formatApiError(err?.response?.data?.detail) || "Falha ao enviar foto");
+    } finally {
+      setUploadingPhotos(false);
+      e.target.value = "";
+    }
+  };
+
+  const generateAnswer = async () => {
+    // Save task first if new (need task_id for the AI endpoint)
+    setGeneratingAnswer(true);
+    try {
+      let currentTaskId = task?.id;
+      if (!currentTaskId) {
+        // Save-and-reload as draft
+        const { data } = await api.post("/tasks", {
+          subject, title, description, due_date: dueDate,
+          attachments: files.map((f) => f.id),
+          admin_photos: adminPhotos.map((f) => f.id),
+          answer,
+          assigned_to: assignedTo,
+        });
+        currentTaskId = data.id;
+        toast.info("Rascunho salvo — gerando resposta...");
+      } else {
+        // Persist current photo list first
+        await api.put(`/tasks/${currentTaskId}`, {
+          admin_photos: adminPhotos.map((f) => f.id),
+        });
+      }
+      const { data: gen } = await api.post("/ai/generate-task-answer", {
+        task_id: currentTaskId,
+      });
+      setAnswer(gen.answer || "");
+      toast.success(`Resposta gerada a partir de ${gen.photos_used} foto(s)! ✨`);
+      // If we created a draft, forward to onSaved to close as edit next
+      if (!task?.id) onSaved();
+    } catch (err) {
+      toast.error(formatApiError(err?.response?.data?.detail) || "Falha ao gerar resposta");
+    } finally {
+      setGeneratingAnswer(false);
+    }
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -366,6 +435,8 @@ function TaskDialog({ task, onClose, onSaved }) {
       const payload = {
         subject, title, description, due_date: dueDate,
         attachments: files.map((f) => f.id),
+        admin_photos: adminPhotos.map((f) => f.id),
+        answer,
         assigned_to: assignedTo,
       };
       if (isEdit) {
@@ -425,7 +496,22 @@ function TaskDialog({ task, onClose, onSaved }) {
             <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Lista de exercícios cap. 4" className="nb-input" data-testid="task-title-input" />
           </div>
           <div>
-            <label className="block text-sm font-bold mb-1.5">Descrição</label>
+            <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+              <label className="block text-sm font-bold">Descrição</label>
+              <AIEnhanceButton
+                endpoint="/ai/improve-task"
+                payload={{ title, subject, hint: description }}
+                disabled={!title.trim()}
+                label="Escrever com IA"
+                testId="ai-improve-task-button"
+                onResult={(data) => {
+                  const parts = [data.description];
+                  if (data.objectives?.length) parts.push("\n\n🎯 Objetivos:\n" + data.objectives.map((o) => `• ${o}`).join("\n"));
+                  if (data.tips?.length) parts.push("\n\n💡 Dicas:\n" + data.tips.map((t) => `• ${t}`).join("\n"));
+                  setDescription(parts.join(""));
+                }}
+              />
+            </div>
             <textarea required rows={5} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Detalhes da tarefa..." className="nb-input resize-y" data-testid="task-description-input" />
           </div>
           <div>
@@ -465,6 +551,70 @@ function TaskDialog({ task, onClose, onSaved }) {
               testIdPrefix="task-recipients"
             />
           </div>
+
+          {/* Admin-only photos + AI answer generation */}
+          <div className="nb-card p-4 bg-gradient-to-br from-violet-50 to-pink-50">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-4 h-4 text-violet-600" strokeWidth={2.5} />
+              <h4 className="font-heading font-bold text-sm">Fotos da tarefa (só admin) + resposta com IA</h4>
+            </div>
+            <p className="text-xs text-neutral-600 mb-3">
+              Envie fotos do enunciado. A IA analisa as imagens e gera o gabarito. Alunos NÃO veem as fotos — só a resposta final.
+            </p>
+            <label className="block w-full border-2 border-dashed border-black rounded-xl bg-white hover:bg-violet-100 p-4 cursor-pointer text-center" data-testid="task-photo-upload-zone">
+              <Upload className="w-5 h-5 mx-auto mb-1" />
+              <span className="text-sm font-bold">{uploadingPhotos ? "Enviando..." : "Adicionar fotos da tarefa"}</span>
+              <p className="text-[10px] text-neutral-600">JPG / PNG</p>
+              <input type="file" multiple accept="image/*" onChange={handlePhotoUpload} className="hidden" disabled={uploadingPhotos} data-testid="task-photo-input" />
+            </label>
+            {adminPhotos.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                {adminPhotos.map((f) => (
+                  <div key={f.id} className="flex items-center justify-between nb-card bg-white px-3 py-1.5 text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Paperclip className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate text-xs">{f.filename}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAdminPhotos((p) => p.filter((x) => x.id !== f.id))}
+                      className="text-red-700 hover:text-red-900"
+                      data-testid={`remove-photo-${f.id}`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={generateAnswer}
+              disabled={generatingAnswer || adminPhotos.length === 0 || !title.trim()}
+              className="nb-btn w-full mt-3 px-4 py-2.5 bg-gradient-to-r from-violet-300 to-pink-300 hover:from-violet-400 hover:to-pink-400 flex items-center justify-center gap-2 text-sm disabled:opacity-50"
+              data-testid="generate-answer-button"
+            >
+              <Sparkles className={`w-4 h-4 ${generatingAnswer ? "animate-spin" : ""}`} strokeWidth={2.5} />
+              {generatingAnswer ? "Analisando fotos..." : "Gerar resposta com IA"}
+            </button>
+            <div className="mt-3">
+              <label className="block text-xs font-bold mb-1.5">Resposta / Gabarito (visível aos alunos)</label>
+              <textarea
+                rows={6}
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                placeholder="Preencha manualmente ou clique em 'Gerar resposta com IA'"
+                className="nb-input resize-y bg-white"
+                data-testid="task-answer-input"
+              />
+              {answer && (
+                <p className="text-[10px] text-emerald-700 mt-1 font-bold">
+                  ✓ Alunos verão essa resposta ao clicar em "Ver resposta"
+                </p>
+              )}
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="nb-btn bg-white px-5 py-2.5">Cancelar</button>
             <button type="submit" disabled={submitting || subjects.length === 0} className="nb-btn bg-sky-400 px-5 py-2.5" data-testid="submit-task-button">
@@ -1092,7 +1242,20 @@ function AnnouncementDialog({ announcement, students, onClose, onSaved }) {
             <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex.: Reunião de pais" className="nb-input" data-testid="announcement-title-input" />
           </div>
           <div>
-            <label className="block text-sm font-bold mb-1.5">Mensagem</label>
+            <div className="flex items-center justify-between mb-1.5 gap-2 flex-wrap">
+              <label className="block text-sm font-bold">Mensagem</label>
+              <AIEnhanceButton
+                endpoint="/ai/generate-announcement"
+                payload={{ prompt: title || message }}
+                disabled={!title.trim() && !message.trim()}
+                label="Escrever com IA"
+                testId="ai-generate-announcement-button"
+                onResult={(data) => {
+                  if (data.title && !title) setTitle(data.title);
+                  setMessage(data.message);
+                }}
+              />
+            </div>
             <textarea required rows={4} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Detalhes do aviso..." className="nb-input resize-y" data-testid="announcement-message-input" />
           </div>
           <div>

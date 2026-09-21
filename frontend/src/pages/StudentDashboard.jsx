@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { toast } from "sonner";
-import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter, Megaphone, LayoutGrid, CalendarDays } from "lucide-react";
+import { Calendar as CalendarIcon, Paperclip, Check, BookOpen, Filter, Megaphone, LayoutGrid, CalendarDays, Sparkles } from "lucide-react";
 import api, { API, formatApiError } from "@/lib/api";
 import AppHeader from "@/components/AppHeader";
 import MyProfileBanner from "@/components/MyProfileBanner";
 import AnnouncementComments from "@/components/AnnouncementComments";
 import TaskCalendar from "@/components/TaskCalendar";
 import PrizeBanner from "@/components/PrizeBanner";
+import AIDailySummary from "@/components/AIDailySummary";
 import { getPriority, formatDateBR, daysUntil } from "@/lib/priority";
 import { fireConfetti } from "@/lib/celebrate";
 
@@ -85,6 +86,7 @@ export default function StudentDashboard() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-8 pb-24 sm:pb-8">
         <MyProfileBanner bg="bg-sky-100" />
         <PrizeBanner />
+        <AIDailySummary />
         <div className="mb-6 sm:mb-8">
           <h1 className="font-heading font-black text-3xl sm:text-5xl tracking-tight">Olá! Vamos estudar?</h1>
           <p className="text-neutral-600 mt-1">Marque suas tarefas conforme as conclui.</p>
@@ -262,6 +264,34 @@ function StudentTaskCard({ task, onToggle, index }) {
         <Check className="w-4 h-4" strokeWidth={3} />
         {task.completed ? "Desmarcar" : "Marcar como concluída"}
       </button>
+      {task.answer && (
+        <StudentAnswerReveal answer={task.answer} taskId={task.id} />
+      )}
+    </div>
+  );
+}
+
+function StudentAnswerReveal({ answer, taskId }) {
+  const [shown, setShown] = useState(false);
+  if (!shown) {
+    return (
+      <button
+        onClick={() => setShown(true)}
+        className="nb-btn w-full mt-2 px-4 py-2 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-200 to-sky-200 hover:from-emerald-300 hover:to-sky-300 text-sm"
+        data-testid={`reveal-answer-${taskId}`}
+      >
+        <Sparkles className="w-4 h-4" strokeWidth={2.5} />
+        Ver resposta / gabarito
+      </button>
+    );
+  }
+  return (
+    <div className="nb-card bg-emerald-50 p-3 mt-2" data-testid={`answer-${taskId}`}>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Resposta</span>
+      </div>
+      <p className="text-sm whitespace-pre-wrap">{answer}</p>
     </div>
   );
 }
