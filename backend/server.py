@@ -1359,6 +1359,34 @@ def _strip_json_fence(text: str) -> str:
     return t.strip()
 
 
+def _clean_answer_text(text: str) -> str:
+    """Remove markdown noise (bold **, italic *, code fences, headings) from AI text
+    while preserving line breaks and mathematical symbols.
+    """
+    import re
+    t = (text or "").strip()
+    # Strip code fences ```...```
+    if t.startswith("```"):
+        first_newline = t.find("\n")
+        if first_newline > 0:
+            t = t[first_newline + 1:]
+        if t.endswith("```"):
+            t = t[:-3]
+    t = t.strip()
+    # Remove **bold** and __bold__ but keep inner text
+    t = re.sub(r"\*\*(.+?)\*\*", r"\1", t, flags=re.DOTALL)
+    t = re.sub(r"__(.+?)__", r"\1", t, flags=re.DOTALL)
+    # Remove *italic* (single asterisks NOT surrounded by digits like 3*5)
+    t = re.sub(r"(?<![\w\d])\*(?!\s)([^\*\n]+?)(?<!\s)\*(?![\w\d])", r"\1", t)
+    # Remove leading heading markers # ## ###
+    t = re.sub(r"(?m)^#{1,6}\s+", "", t)
+    # Remove markdown bullet stars/hyphens keeping content
+    t = re.sub(r"(?m)^\s*[-\*]\s+", "", t)
+    # Collapse 3+ blank lines
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
 @api_router.post("/ai/improve-task")
 async def ai_improve_task(payload: AIImproveTaskIn, admin: dict = Depends(require_admin)):
     await _ensure_ai_enabled()
@@ -1513,25 +1541,35 @@ async def ai_generate_task_answer(payload: AIGenTaskAnswerIn, admin: dict = Depe
         raise HTTPException(status_code=400, detail="Nenhuma foto válida encontrada. Envie imagens (jpg/png).")
 
     system = (
-        "Você é um professor experiente resolvendo uma tarefa escolar para servir de gabarito. "
-        "Português do Brasil. Analise as fotos com atenção. Resolva TODOS os exercícios/questões "
-        "que aparecem, mostrando o raciocínio passo a passo. Seja claro, organizado e correto. "
-        "Formate a resposta com marcadores/numeração quando apropriado. Não use JSON — devolva texto simples."
+        "Você é um professor gerando um gabarito CURTO E DIRETO em português do Brasil. "
+        "NÃO explique o raciocínio, NÃO adicione introdução, NÃO use markdown (nada de ** para negrito). "
+        "Texto puro, sem cercas de código. Para cada questão da imagem, siga EXATAMENTE este formato:\n\n"
+        "Questão N: <enunciado curto extraído da imagem>\n"
+        "Resposta: <resposta final>\n"
+        "\n"
+        "Se for MATEMÁTICA ou CÁLCULO, mostre as CONTAS em UMA linha antes da resposta, por exemplo:\n"
+        "Questão 1: 2 + 3\n"
+        "Contas: 2 + 3 = 5\n"
+        "Resposta: 5\n"
+        "\n"
+        "Separe as questões por uma linha em branco. NUNCA adicione títulos, conclusões, dicas ou observações extras."
     )
     hint = (payload.extra_hint or "").strip()
     prompt = (
         f"Matéria: {task.get('subject','')}\n"
         f"Título: {task.get('title','')}\n"
         f"Enunciado: {task.get('description','')}\n"
-        + (f"Observações extras do professor: {hint}\n" if hint else "")
-        + "\nAnalise as fotos anexadas e produza um GABARITO COMPLETO com a resolução de cada questão. "
-        "Se houver ambiguidade, resolva a interpretação mais provável e sinalize."
+        + (f"Observações do professor: {hint}\n" if hint else "")
+        + "\nAnalise as fotos e liste as questões com suas respostas no formato solicitado. "
+        "Sem introdução, sem raciocínio explicado, sem negrito com **, sem markdown."
     )
     try:
         chat = _new_ai_chat(f"gen-answer-{admin['id']}-{payload.task_id}", system)
         resp = await chat.send_message(UserMessage(text=prompt, file_contents=image_contents))
         text = resp if isinstance(resp, str) else str(resp)
-        return {"answer": text.strip(), "photos_used": len(image_contents)}
+        # Post-process: strip markdown bold/italic, code fences, headings
+        cleaned = _clean_answer_text(text)
+        return {"answer": cleaned, "photos_used": len(image_contents)}
     except Exception as e:
         logger.error(f"AI generate-task-answer error: {e}")
         raise HTTPException(status_code=502, detail=f"IA indisponível: {e}")

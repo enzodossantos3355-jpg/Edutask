@@ -287,9 +287,19 @@ function StudentAnswerReveal({ answer, taskId }) {
   }
   return (
     <div className="nb-card bg-emerald-50 p-3 mt-2" data-testid={`answer-${taskId}`}>
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
-        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Resposta</span>
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Resposta</span>
+        </div>
+        <button
+          onClick={() => setShown(false)}
+          className="nb-btn bg-white hover:bg-red-100 px-2 py-1 text-[10px] flex items-center gap-1"
+          data-testid={`hide-answer-${taskId}`}
+          aria-label="Fechar resposta"
+        >
+          Fechar
+        </button>
       </div>
       <p className="text-sm whitespace-pre-wrap">{answer}</p>
     </div>
