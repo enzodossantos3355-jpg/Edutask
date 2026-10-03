@@ -1084,17 +1084,41 @@ async def get_monthly_prize(_: dict = Depends(get_current_user)):
             "emoji": settings.get("emoji", "🏆"),
             "image_id": settings.get("image_id"),
         }
-    students = await db.users.find({"role": "aluno"}, {"_id": 0, "id": 1, "name": 1, "points": 1, "avatar_path": 1}).to_list(1000)
-    students.sort(key=lambda s: -(s.get("points", 0) or 0))
+
+    now_br = datetime.now(timezone.utc).astimezone(BR_TZ)
+    month_start_utc = now_br.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+    students = await db.users.find({"role": "aluno", "status": "active"}, {"_id": 0, "id": 1, "name": 1, "avatar_path": 1, "streak": 1}).to_list(1000)
+    # Count on-time completions in the current month per student
+    tasks = await db.tasks.find({}, {"_id": 0, "id": 1, "due_date": 1}).to_list(2000)
+    task_due = {t["id"]: t.get("due_date", "9999-12-31") for t in tasks}
+    completions = await db.completions.find({"completed_at": {"$gte": month_start_utc.isoformat()}}, {"_id": 0}).to_list(5000)
+    stats = {}
+    for c in completions:
+        uid = c["user_id"]
+        stats.setdefault(uid, {"month": 0, "on_time": 0})
+        stats[uid]["month"] += 1
+        due = task_due.get(c["task_id"], "9999-12-31")
+        completed_day = (c.get("completed_at") or "")[:10]
+        if completed_day and completed_day <= due:
+            stats[uid]["on_time"] += 1
+
+    def score(s):
+        st = stats.get(s["id"], {"month": 0, "on_time": 0})
+        return (st["on_time"], st["month"], s.get("streak", 0) or 0)
+
+    students.sort(key=lambda s: score(s), reverse=True)
     leader = None
-    if students and (students[0].get("points", 0) or 0) > 0:
+    if students and score(students[0])[0] + score(students[0])[1] > 0:
         s0 = students[0]
+        st = stats.get(s0["id"], {"month": 0, "on_time": 0})
         leader = {
             "id": s0["id"], "name": s0["name"],
-            "points": s0.get("points", 0) or 0,
+            "on_time_this_month": st["on_time"],
+            "completions_this_month": st["month"],
+            "streak": s0.get("streak", 0) or 0,
             "has_avatar": bool(s0.get("avatar_path")),
         }
-    now_br = datetime.now(timezone.utc).astimezone(BR_TZ)
     _, next_start = _month_bounds(now_br)
     days_remaining = (next_start.date() - now_br.date()).days
     end_date = (next_start - timedelta(seconds=1)).date().isoformat()
@@ -1988,14 +2012,36 @@ async def ai_prize_tips(user: dict = Depends(get_current_user)):
     prize_title = prize_doc.get("title", "Prêmio do mês") if prize_doc else "Prêmio do mês"
 
     students = await db.users.find({"role": "aluno", "status": "active"}, {"_id": 0}).to_list(500)
-    students_sorted = sorted(students, key=lambda s: (-s.get("points", 0), -s.get("streak", 0), s["name"]))
+    # Compute on-time task metrics for this month for every student
+    now_utc = datetime.now(timezone.utc)
+    month_start = now_utc.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    tasks_by_id = {t["id"]: t for t in await db.tasks.find({}, {"_id": 0, "id": 1, "due_date": 1}).to_list(5000)}
+    all_completions = await db.completions.find({}, {"_id": 0}).to_list(10000)
+    stats_map = {}
+    for c in all_completions:
+        uid = c["user_id"]
+        stats_map.setdefault(uid, {"total": 0, "month": 0, "on_time_month": 0})
+        stats_map[uid]["total"] += 1
+        if c.get("completed_at", "") >= month_start.isoformat():
+            stats_map[uid]["month"] += 1
+            due = (tasks_by_id.get(c["task_id"], {}) or {}).get("due_date", "9999-12-31")
+            if (c.get("completed_at") or "")[:10] <= due:
+                stats_map[uid]["on_time_month"] += 1
+
+    def perf_key(s):
+        st = stats_map.get(s["id"], {"total": 0, "month": 0, "on_time_month": 0})
+        return (st["on_time_month"], st["month"], s.get("streak", 0) or 0, st["total"], s["name"])
+
+    students_sorted = sorted(students, key=perf_key, reverse=True)
     rank = next((i + 1 for i, s in enumerate(students_sorted) if s["id"] == user["id"]), len(students_sorted))
     total = len(students_sorted)
     my = next((s for s in students_sorted if s["id"] == user["id"]), None)
     if not my:
         raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    my_st = stats_map.get(user["id"], {"total": 0, "month": 0, "on_time_month": 0})
     leader = students_sorted[0] if students_sorted else my
-    gap = max(0, leader.get("points", 0) - my.get("points", 0))
+    leader_st = stats_map.get(leader["id"], {"total": 0, "month": 0, "on_time_month": 0})
+    gap_on_time = max(0, leader_st["on_time_month"] - my_st["on_time_month"])
 
     system = (
         "Você é um coach motivador de estudos em português do Brasil. Fale direto com o aluno (você). "
@@ -2003,10 +2049,11 @@ async def ai_prize_tips(user: dict = Depends(get_current_user)):
     )
     prompt = (
         f"O aluno {user['name']} está na posição {rank}º de {total} pelo prêmio \"{prize_title}\".\n"
-        f"Ele tem {my.get('points', 0)} pontos e {my.get('streak', 0)} dias de sequência.\n"
-        f"O líder tem {leader.get('points', 0)} pontos ({gap} de vantagem).\n"
+        f"Neste mês: {my_st['on_time_month']} tarefas concluídas no prazo, {my_st['month']} no total. Sequência: {my.get('streak', 0)} dias.\n"
+        f"O líder tem {leader_st['on_time_month']} entregas no prazo ({gap_on_time} de vantagem sobre ele).\n"
         "Dê 3 dicas ESPECÍFICAS e práticas para ele melhorar as chances de vencer neste mês. "
-        "Se ele já for líder, dê dicas para manter a liderança e superar recordes pessoais."
+        "Foque em: entregar no prazo, manter constância diária, cobrir diferentes matérias. "
+        "Se ele já for líder, dê dicas para manter a liderança."
     )
     try:
         chat = _new_ai_chat(f"prize-tips-{user['id']}", system)
@@ -2015,9 +2062,10 @@ async def ai_prize_tips(user: dict = Depends(get_current_user)):
         return {
             "rank": rank,
             "total": total,
-            "gap_to_leader": gap,
-            "my_points": my.get("points", 0),
-            "leader_points": leader.get("points", 0),
+            "gap_on_time": gap_on_time,
+            "my_on_time": my_st["on_time_month"],
+            "my_month": my_st["month"],
+            "leader_on_time": leader_st["on_time_month"],
             "tips": text.strip(),
         }
     except Exception as e:
@@ -2027,8 +2075,9 @@ async def ai_prize_tips(user: dict = Depends(get_current_user)):
 
 @api_router.get("/ai/prize-evaluate")
 async def ai_prize_evaluate(admin: dict = Depends(require_admin)):
-    """Admin-only: AI evaluates the current leaderboard and suggests a winner
-    with justification, considering points, streak, consistency, and task completion.
+    """Admin-only: AI evaluates task performance (completions, on-time delivery,
+    streak, subject variety) and suggests a winner. POINTS are NOT considered —
+    points are used only for buying profile effects.
     """
     await _ensure_ai_enabled()
     if not EMERGENT_KEY:
@@ -2039,39 +2088,62 @@ async def ai_prize_evaluate(admin: dict = Depends(require_admin)):
     students = await db.users.find({"role": "aluno", "status": "active"}, {"_id": 0}).to_list(500)
     if not students:
         return {"suggestion": "Nenhum aluno cadastrado.", "candidates": []}
-    students_sorted = sorted(students, key=lambda s: (-s.get("points", 0), -s.get("streak", 0), s["name"]))
-    top = students_sorted[:10]
 
-    # Compute completion stats for top candidates
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    all_completions = await db.completions.find({}, {"_id": 0}).to_list(5000)
+    all_tasks = await db.tasks.find({}, {"_id": 0, "id": 1, "due_date": 1, "subject": 1}).to_list(5000)
+    task_meta = {t["id"]: t for t in all_tasks}
+    all_completions = await db.completions.find({}, {"_id": 0}).to_list(10000)
     stats_per = {}
     for c in all_completions:
-        stats_per.setdefault(c["user_id"], {"total": 0, "month": 0})
-        stats_per[c["user_id"]]["total"] += 1
+        uid = c["user_id"]
+        s = stats_per.setdefault(uid, {"total": 0, "month": 0, "on_time_month": 0, "late_month": 0, "subjects": set()})
+        s["total"] += 1
+        t = task_meta.get(c["task_id"])
+        if not t:
+            continue
         if c.get("completed_at", "") >= month_start.isoformat():
-            stats_per[c["user_id"]]["month"] += 1
+            s["month"] += 1
+            due = t.get("due_date", "9999-12-31")
+            if (c.get("completed_at") or "")[:10] <= due:
+                s["on_time_month"] += 1
+            else:
+                s["late_month"] += 1
+            if t.get("subject"):
+                s["subjects"].add(t["subject"])
+
+    # Sort by task performance only — NO points
+    def perf_key(s):
+        st = stats_per.get(s["id"], {"total": 0, "month": 0, "on_time_month": 0, "subjects": set()})
+        return (st["on_time_month"], st["month"], s.get("streak", 0) or 0, len(st["subjects"]), st["total"])
+
+    students_sorted = sorted(students, key=perf_key, reverse=True)
+    top = students_sorted[:10]
 
     candidates_data = []
     for s in top:
-        cs = stats_per.get(s["id"], {"total": 0, "month": 0})
+        cs = stats_per.get(s["id"], {"total": 0, "month": 0, "on_time_month": 0, "late_month": 0, "subjects": set()})
         candidates_data.append({
-            "id": s["id"], "name": s["name"], "points": s.get("points", 0),
+            "id": s["id"], "name": s["name"],
             "streak": s.get("streak", 0), "longest_streak": s.get("longest_streak", 0),
             "total_completions": cs["total"], "month_completions": cs["month"],
+            "on_time_month": cs["on_time_month"], "late_month": cs["late_month"],
+            "subject_variety": len(cs["subjects"]),
+            "subjects": sorted(cs["subjects"]),
         })
 
     system = (
-        "Você é um pedagogo justo escolhendo o vencedor mensal. Português do Brasil. "
-        "Analise pontos, sequência atual, sequência mais longa e completude no mês. "
+        "Você é um pedagogo justo escolhendo o vencedor mensal com base em DESEMPENHO ACADÊMICO. "
+        "Português do Brasil. Analise: tarefas concluídas no mês (peso alto), entregas no prazo (peso alto), "
+        "sequência atual e mais longa, e variedade de matérias. IGNORE pontos de perfil (isso é só para loja). "
         "Responda APENAS em JSON válido: {\"winner_id\":\"...\",\"winner_name\":\"...\",\"justification\":\"...\",\"criteria\":[\"...\",\"...\"]}"
     )
     prompt = (
         f"Prêmio: {prize_title}\n\nCandidatos (top 10):\n" +
         "\n".join([
-            f"- {c['name']} (id={c['id']}): {c['points']} pts, streak {c['streak']} dias (recorde {c['longest_streak']}), "
-            f"tarefas concluídas: {c['total_completions']} (mês: {c['month_completions']})"
+            f"- {c['name']} (id={c['id']}): mês={c['month_completions']} concluídas ({c['on_time_month']} no prazo, {c['late_month']} atrasadas), "
+            f"streak {c['streak']}d (recorde {c['longest_streak']}d), matérias variadas: {c['subject_variety']} ({', '.join(c['subjects']) or '-'}), "
+            f"histórico total: {c['total_completions']}"
             for c in candidates_data
         ]) +
         "\n\nEscolha o vencedor mais merecedor, justificando em 2-3 frases claras e listando 2-3 critérios usados."

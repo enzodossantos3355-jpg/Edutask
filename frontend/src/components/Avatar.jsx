@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { API } from "@/lib/api";
 
 /**
- * Avatar component. Shows user's avatar image if present, else colored initial.
- * Optional `tierBorderColor` (hex) renders a thicker colored border around the avatar.
+ * Circular avatar. Optional `effect` renders a decorative wrapper (frame).
+ * Legacy `tierBorderColor` prop is accepted but ignored (tier system removed).
  */
 export default function Avatar({
   userId,
@@ -14,6 +14,7 @@ export default function Avatar({
   bg = "bg-sky-300",
   className = "",
   textClassName = "",
+  // eslint-disable-next-line no-unused-vars
   tierBorderColor = null,
   effect = null,
 }) {
@@ -35,8 +36,12 @@ export default function Avatar({
 
   const inner = (
     <div
-      className={`nb-card flex items-center justify-center overflow-hidden ${showImage ? "bg-white" : bg} ${className}`}
-      style={{ width: size, height: size }}
+      className={`flex items-center justify-center overflow-hidden rounded-full border-2 border-black ${showImage ? "bg-white" : bg} ${className}`}
+      style={{
+        width: size,
+        height: size,
+        boxShadow: "3px 3px 0 0 #0a0a0a",
+      }}
       data-testid={`avatar-${userId}`}
     >
       {showImage ? (
@@ -44,7 +49,7 @@ export default function Avatar({
           src={src}
           alt={name}
           onError={() => setErrored(true)}
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover rounded-full"
           draggable={false}
         />
       ) : (
@@ -53,44 +58,14 @@ export default function Avatar({
     </div>
   );
 
-  if (!tierBorderColor) {
-    if (!effect || effect === "none") return inner;
-    return (
-      <div
-        className={`fx-avatar-wrapper ${effect}`}
-        style={{ width: size + 8, height: size + 8 }}
-        data-testid={`avatar-effect-${userId}`}
-      >
-        {inner}
-      </div>
-    );
-  }
-
-  const ringSize = size + 12;
-  const wrapped = (
-    <div
-      className="inline-flex items-center justify-center"
-      style={{
-        width: ringSize,
-        height: ringSize,
-        background: tierBorderColor,
-        borderRadius: "1.1rem",
-        boxShadow: `0 0 0 2px #0a0a0a, 0 0 14px ${tierBorderColor}66`,
-        padding: 6,
-      }}
-      data-testid={`avatar-tier-wrapper-${userId}`}
-    >
-      {inner}
-    </div>
-  );
-  if (!effect || effect === "none") return wrapped;
+  if (!effect || effect === "none") return inner;
   return (
     <div
       className={`fx-avatar-wrapper ${effect}`}
-      style={{ width: ringSize + 8, height: ringSize + 8 }}
+      style={{ width: size + 10, height: size + 10 }}
       data-testid={`avatar-effect-${userId}`}
     >
-      {wrapped}
+      {inner}
     </div>
   );
 }

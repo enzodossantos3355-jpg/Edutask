@@ -204,6 +204,7 @@ h4,
 .fx-avatar-wrapper > * {
     position: relative;
     z-index: 2;
+    border-radius: 50% !important;
 }
 
 /* Neon Pulse — soft blue pulsing halo */
